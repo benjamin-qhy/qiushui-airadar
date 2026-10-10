@@ -151,11 +151,11 @@ export function CollectionStatus({ initial }: { initial: CollectionData }) {
             </p>
             <div className='grid grid-cols-2 gap-4 border-t pt-4 sm:grid-cols-5'>
               {[
-                ['本轮发现', totals?.discovered],
+                ['本轮扫描到（含已有）', totals?.discovered],
                 ...(hasBreakdown
                   ? ([
                       ['本轮新处理成功', totals?.newlyCompleted],
-                      ['已有成功内容', totals?.existingCompleted],
+                      ['已处理过的条目', totals?.existingCompleted],
                     ] as const)
                   : ([['处理成功（含已有）', totals?.completed]] as const)),
                 ['异常 / 待处理', totals?.failed],
@@ -167,6 +167,11 @@ export function CollectionStatus({ initial }: { initial: CollectionData }) {
                 </div>
               ))}
             </div>
+            {hasBreakdown && (
+              <p className='text-xs text-muted-foreground'>
+                扫描到的是信源返回的条目数，包含以前采集的内容；本轮真正新增并处理成功的数量请看“本轮新处理成功”。
+              </p>
+            )}
             {!hasBreakdown && (
               <p className='text-xs text-muted-foreground'>
                 这轮采集发生在升级前，无法拆分新处理和已有内容。
