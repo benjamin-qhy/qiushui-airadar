@@ -196,6 +196,19 @@ describe('single-table AI flow', () => {
     ])
   })
 
+  it('accepts a JSON code fence around the model scoring response', async () => {
+    const { result } = await fixture(
+      {
+        classify:
+          '---\nkeywords: ["工作流"]\nspam:\n  isJunk: false\n  reason: null\n---',
+        score: `\`\`\`json\n${score}\n\`\`\``,
+      },
+      100
+    )
+    expect(result.process_status).toBe('completed')
+    expect(result.total_score).toBeGreaterThan(0)
+  })
+
   it('scores low-value English without translating', async () => {
     const { result, calls } = await fixture(
       {

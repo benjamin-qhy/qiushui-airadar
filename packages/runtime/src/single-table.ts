@@ -1219,20 +1219,26 @@ export class SingleTableRepository {
     const row = this.getById(id)
     if (!row) throw new Error('Content not found')
     if (row.junk_source === 'manual') return row
-    if (row.is_junk && row.junk_source === 'rule' && row.junk_reason === reason)
+    if (
+      row.is_junk &&
+      row.junk_source === 'rule' &&
+      row.junk_reason === reason &&
+      row.process_status === 'completed'
+    )
       return row
     const now = new Date().toISOString()
     this.database
       .prepare(
         `UPDATE contents SET is_junk=1, junk_source='rule', junk_reason=?,
        junk_updated_at=?, recommendation='none', total_score=NULL,
-       updated_at=? WHERE id=?`
+       process_status='completed', processing_stage='completed',
+       last_error=NULL, last_processed_at=?, updated_at=? WHERE id=?`
       )
-      .run(reason, now, now, id)
+      .run(reason, now, now, now, id)
     await this.refreshFrontmatter(id)
     await this.appendLog(id, {
       action: 'rule-junk',
-      stage: 'failed',
+      stage: 'completed',
       status: 'succeeded',
       request: { reason },
       response: { updated: true },
@@ -1352,7 +1358,8 @@ export class SingleTableRepository {
           OR last_error LIKE '%余额不足%' OR last_error LIKE '%额度不足%'
           OR last_error LIKE '%Long content summary is missing%'
           OR last_error LIKE '%"path":["keywords"]%'
-          OR last_error LIKE 'Codex error:%')
+          OR last_error LIKE 'Codex error:%'
+          OR last_error LIKE 'Unexpected token%')
         AND last_error NOT LIKE 'All providers failed%'
         ORDER BY first_inflow_at ASC`
       )

@@ -10,6 +10,7 @@ import {
   loadSingleTableConfig,
   loadSourceState,
   saveAnalysisModelConfig,
+  saveAnalysisTranscriptionConfig,
   saveEditableConfigFile,
   saveProvidersConfig,
   saveSourcesConfig,
@@ -23,7 +24,10 @@ import {
   SingleTableRepository,
   type ContentRow,
 } from '@qiushuiai-airadar/runtime'
-import { classifyNonArticlePage } from '@qiushuiai-airadar/source-adapters'
+import {
+  classifyNonArticlePage,
+  normalizeYouTubeIdentity,
+} from '@qiushuiai-airadar/source-adapters'
 import {
   createReadOnlyCodexCredentialStore,
   createFileModelCredentialStore,
@@ -37,6 +41,10 @@ import {
   type SingleTableModelGateway,
 } from '@qiushuiai-airadar/pipeline'
 import { createSingleTableSourceProvider } from './single-table-provider.js'
+import {
+  checkXVideoTranscription,
+  transcribeXVideo,
+} from './x-video-transcriber.js'
 import {
   collectSingleTable,
   createCollectionControl,
@@ -1126,6 +1134,12 @@ export function createSingleTableServiceApp(options: {
             )
             return send(response, 200, { mode: 'file', files })
           }
+          if (method === 'GET' && url.pathname === '/api/transcription') {
+            const config = await loadSingleTableConfig(options.configRoot)
+            return send(response, 200, {
+              enabled: config.analysis.transcription.auto,
+            })
+          }
           if (['POST', 'PUT', 'DELETE'].includes(method)) {
             const origin = request.headers.origin
             if (
@@ -1137,6 +1151,29 @@ export function createSingleTableServiceApp(options: {
               !request.headers['content-type']?.startsWith('application/json')
             )
               return send(response, 415, { error: 'json_required' })
+            if (method === 'PUT' && url.pathname === '/api/transcription') {
+              const body = await bodyOf(request)
+              if (typeof body.enabled !== 'boolean')
+                return send(response, 400, { error: 'enabled_required' })
+              if (collection)
+                return send(response, 409, {
+                  message: '采集进行中，请结束后修改音频转写开关。',
+                })
+              if (body.enabled) {
+                try {
+                  await checkXVideoTranscription(options.dataRoot)
+                } catch {
+                  return send(response, 409, {
+                    message: '本机转写组件尚未就绪，无法开启。',
+                  })
+                }
+              }
+              await saveAnalysisTranscriptionConfig(
+                options.configRoot,
+                body.enabled
+              )
+              return send(response, 200, { enabled: body.enabled })
+            }
             if (method === 'POST' && url.pathname === '/api/model-login') {
               const body = await bodyOf(request)
               return send(
@@ -1914,6 +1951,9 @@ export function createSingleTableServiceApp(options: {
                   youtubeApiKey: await credential('YOUTUBE_API_KEY'),
                   fetch: options.providerFetch,
                   providerRoutes: config.providers.routes,
+                  xVideoTranscriber: config.analysis.transcription.auto
+                    ? (url) => transcribeXVideo(options.dataRoot, url)
+                    : undefined,
                 })
                 const originalBody = await activeRepository.readBody(
                   id,
@@ -1941,8 +1981,7 @@ export function createSingleTableServiceApp(options: {
                     sourceAccountId: String(row.source_account_id),
                     sourceAccountName: String(row.source_account_name),
                     externalContentId: row.external_content_id as
-                      | string
-                      | undefined,
+                      string | undefined,
                     canonicalUrl: row.canonical_url as string | undefined,
                     title: row.title,
                     originalTitle: row.original_title ?? undefined,
@@ -1962,6 +2001,33 @@ export function createSingleTableServiceApp(options: {
                       response: { characters: suppliedTranscript.length },
                     },
                   ]
+                } else if (
+                  config.analysis.transcription.auto &&
+                  row.process_status === 'waiting-manual-transcription' &&
+                  row.source_platform === 'x' &&
+                  row.content_kind === 'video' &&
+                  row.canonical_url
+                ) {
+                  const transcript = await transcribeXVideo(
+                    options.dataRoot,
+                    String(row.canonical_url)
+                  )
+                  original = {
+                    platform: 'x',
+                    sourceType: String(row.source_type),
+                    sourceAccountId: String(row.source_account_id),
+                    sourceAccountName: String(row.source_account_name),
+                    externalContentId: row.external_content_id as
+                      string | undefined,
+                    canonicalUrl: String(row.canonical_url),
+                    title: row.title,
+                    originalTitle: row.original_title ?? undefined,
+                    body: transcript,
+                    kind: 'video',
+                    format: 'subtitle',
+                    language: row.original_language === 'zh' ? 'zh' : 'en',
+                    publishedAt: row.published_at as string | undefined,
+                  }
                 } else if (originalBody) {
                   original = {
                     platform: String(row.source_platform),
@@ -1985,32 +2051,57 @@ export function createSingleTableServiceApp(options: {
                     publishedAt: row.published_at as string | undefined,
                   }
                 } else {
-                  const page = await provider.discover(source)
-                  const item = page.items.find(
-                    (candidate) =>
-                      candidate.externalId === row.external_content_id ||
-                      candidate.url === row.canonical_url
-                  )
-                  if (!item)
-                    return send(response, 409, {
-                      error: 'original_not_in_current_source_page',
+                  let youtubeVideo = false
+                  if (
+                    row.process_status === 'waiting-manual-transcription' &&
+                    row.source_platform === 'x' &&
+                    row.content_kind === 'video' &&
+                    row.canonical_url
+                  ) {
+                    try {
+                      normalizeYouTubeIdentity(String(row.canonical_url))
+                      youtubeVideo = true
+                    } catch {
+                      // Native X videos need the source discovery path.
+                    }
+                  }
+                  if (youtubeVideo) {
+                    const resolved = await provider.resolve(source, {
+                      externalId: String(row.external_content_id ?? ''),
+                      url: String(row.canonical_url),
+                      title: row.title,
+                      kind: 'video',
                     })
-                  const resolved = await provider.resolve(source, item)
-                  original = resolved.original
-                  capturedCalls = [
-                    {
-                      action: 'discover',
-                      stage: 'discovered',
-                      status: 'succeeded',
-                      trigger: 'manual-retry',
-                      request: page.request,
-                      response: page.response,
-                    },
-                    ...(resolved.calls ?? []).map((call) => ({
-                      ...call,
-                      trigger: 'manual-retry' as const,
-                    })),
-                  ]
+                    original = resolved.original
+                    capturedCalls = resolved.calls ?? []
+                  } else {
+                    const page = await provider.discover(source)
+                    const item = page.items.find(
+                      (candidate) =>
+                        candidate.externalId === row.external_content_id ||
+                        candidate.url === row.canonical_url
+                    )
+                    if (!item)
+                      return send(response, 409, {
+                        error: 'original_not_in_current_source_page',
+                      })
+                    const resolved = await provider.resolve(source, item)
+                    original = resolved.original
+                    capturedCalls = [
+                      {
+                        action: 'discover',
+                        stage: 'discovered',
+                        status: 'succeeded',
+                        trigger: 'manual-retry',
+                        request: page.request,
+                        response: page.response,
+                      },
+                      ...(resolved.calls ?? []).map((call) => ({
+                        ...call,
+                        trigger: 'manual-retry' as const,
+                      })),
+                    ]
+                  }
                 }
                 await activeRepository.appendLog(id, {
                   action: 'manual-retry',

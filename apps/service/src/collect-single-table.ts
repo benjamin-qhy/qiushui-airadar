@@ -14,6 +14,10 @@ import {
 } from '@qiushuiai-airadar/pipeline'
 import { SingleTableRepository } from '@qiushuiai-airadar/runtime'
 import { createSingleTableSourceProvider } from './single-table-provider.js'
+import {
+  checkXVideoTranscription,
+  transcribeXVideo,
+} from './x-video-transcriber.js'
 import { addCollectionRunEvent, beginCollectionRun } from './collection-run.js'
 
 export interface CollectionControl {
@@ -138,6 +142,8 @@ async function executeCollection(
     dataRoot
   )
   const config = await loadSingleTableConfig(configRoot)
+  if (config.analysis.transcription.auto)
+    await checkXVideoTranscription(options.dataRoot)
   const sourceState = await loadSourceState(configRoot)
   const secretReader = createFileSecretReader(
     options.secretFile ?? path.join(dataRoot, '.env')
@@ -223,6 +229,9 @@ async function executeCollection(
       twitterApiKey,
       youtubeApiKey,
       providerRoutes: config.providers.routes,
+      xVideoTranscriber: config.analysis.transcription.auto
+        ? (url) => transcribeXVideo(options.dataRoot, url)
+        : undefined,
     })
   const sources = config.sources.sources.map((source) => ({
     ...source,

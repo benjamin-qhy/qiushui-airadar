@@ -38,9 +38,11 @@ const promptNames = {
 } as const
 
 const classificationSchema = z.object({
-  keywords: z.array(z.string()).transform((items) =>
-    [...new Set(items.map((item) => item.trim()).filter(Boolean))].slice(0, 5)
-  ),
+  keywords: z
+    .array(z.string())
+    .transform((items) =>
+      [...new Set(items.map((item) => item.trim()).filter(Boolean))].slice(0, 5)
+    ),
   spam: z.object({ isJunk: z.boolean(), reason: z.string().nullable() }),
 })
 const scoreSchema = z.object({
@@ -392,6 +394,12 @@ function parseFrontmatter(markdown: string): {
   }
 }
 
+function parseModelJson(text: string): unknown {
+  const trimmed = text.trim()
+  const fenced = /^```(?:json)?\s*\n([\s\S]*?)\n```$/iu.exec(trimmed)
+  return JSON.parse(fenced ? fenced[1]! : trimmed)
+}
+
 function longMode(original: OriginalContent, minimum: number): boolean {
   return (
     original.explicitLong === true ||
@@ -536,7 +544,7 @@ export async function processSingleTableContent(
   // The second call receives only original source content and profile, never
   // the first call's summary or keywords.
   const analysisCall = await call(options, row, 'score', variables, (text) =>
-    scoringSchema.parse(JSON.parse(text))
+    scoringSchema.parse(parseModelJson(text))
   )
   const analysis = analysisCall.value
   const scores: Record<ScoreDimension, { level: number; reason: string }> = {
@@ -644,7 +652,7 @@ export async function translateSingleTableContent(
             translation_chunk_position: `${index + 1}/${count}`,
             previous_translation_tail: previousTranslationTail || '无',
           },
-          (text) => translationSchema.parse(JSON.parse(text)),
+          (text) => translationSchema.parse(parseModelJson(text)),
           Math.min(
             capacity.maxOutputTokens,
             Math.max(2_000, Buffer.byteLength(body, 'utf8') + 1_000)

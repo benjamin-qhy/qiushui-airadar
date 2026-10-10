@@ -13,6 +13,7 @@ import {
   createYouTubeDataApiProvider,
   fetchTwitterApiIoArticle,
   isXArticleUrl,
+  normalizeYouTubeIdentity,
   type DiscoveredItem,
   type SourceAdapter,
 } from '@qiushuiai-airadar/source-adapters'
@@ -28,6 +29,7 @@ interface ProviderOptions {
   youtubeApiKey?: string
   fetch?: typeof fetch
   articleEnricher?: typeof enrichArticle
+  xVideoTranscriber?: (url: string) => Promise<string>
   providerRoutes?: Partial<ProviderRoutes>
 }
 
@@ -317,34 +319,58 @@ export function createSingleTableSourceProvider(
         title = article.title
         url = article.canonicalUrl
       } else if (item.kind === 'video') {
-        if (source.platform !== 'youtube')
-          throw new Error('Video captions provider is unavailable')
-        const errors: string[] = []
-        for (const id of options.providerRoutes?.youtube_captions ??
-          defaultProviderRoutes.youtube_captions) {
+        let youtubeVideoId: string | undefined
+        if (url) {
           try {
-            if (id !== 'tikhub-youtube')
-              throw new Error('provider is not supported')
-            if (!options.tikHubToken)
-              throw new Error('credential is not configured')
-            const captions = await createTikHubYouTubeTranscriptProvider({
-              token: options.tikHubToken,
-              fetch: trackedFetch,
-            }).fetchTranscript(item.externalId)
-            if (captions.status !== 'available' || !captions.text?.trim())
-              throw new Error(
-                `captions are ${captions.status}; manual transcription required`
-              )
-            body = captions.text
-            break
-          } catch (error) {
-            errors.push(
-              `${id}: ${error instanceof Error ? error.message : String(error)}`
-            )
+            youtubeVideoId = normalizeYouTubeIdentity(url).videoId
+          } catch {
+            // Native X videos do not have a YouTube identity.
           }
         }
-        if (!body) throw routeFailure('youtube_captions', errors)
-        format = 'subtitle'
+        if (source.platform === 'x' && !youtubeVideoId) {
+          if (!options.xVideoTranscriber || !url)
+            throw new Error('Video captions provider is unavailable')
+          body = await options.xVideoTranscriber(url)
+          format = 'subtitle'
+        } else if (source.platform !== 'youtube' && !youtubeVideoId) {
+          throw new Error('Video captions provider is unavailable')
+        } else {
+          const errors: string[] = []
+          for (const id of options.providerRoutes?.youtube_captions ??
+            defaultProviderRoutes.youtube_captions) {
+            try {
+              if (id !== 'tikhub-youtube')
+                throw new Error('provider is not supported')
+              if (!options.tikHubToken)
+                throw new Error('credential is not configured')
+              const captions = await createTikHubYouTubeTranscriptProvider({
+                token: options.tikHubToken,
+                fetch: trackedFetch,
+              }).fetchTranscript(youtubeVideoId ?? item.externalId)
+              if (captions.status !== 'available' || !captions.text?.trim())
+                throw new Error(
+                  `captions are ${captions.status}; manual transcription required`
+                )
+              body = captions.text
+              break
+            } catch (error) {
+              errors.push(
+                `${id}: ${error instanceof Error ? error.message : String(error)}`
+              )
+            }
+          }
+          if (!body && options.xVideoTranscriber && url) {
+            try {
+              body = await options.xVideoTranscriber(url)
+            } catch (error) {
+              errors.push(
+                `local-transcription: ${error instanceof Error ? error.message : String(error)}`
+              )
+            }
+          }
+          if (!body) throw routeFailure('youtube_captions', errors)
+          format = 'subtitle'
+        }
       } else if (sourceItem?.thread) {
         if (!sourceItem.thread.complete)
           throw new Error('X thread is incomplete')
