@@ -1841,7 +1841,7 @@ export function createSingleTableServiceApp(options: {
               url.pathname
             )
             if (retryMatch) {
-              await bodyOf(request)
+              const retryInput = await bodyOf(request)
               const id = decodeURIComponent(retryMatch[1]!)
               const row = activeRepository.getById(id)
               if (!row)
@@ -1922,7 +1922,47 @@ export function createSingleTableServiceApp(options: {
                 let original: import('@qiushuiai-airadar/runtime').OriginalContent
                 let capturedCalls: import('@qiushuiai-airadar/runtime').LogEvent[] =
                   []
-                if (originalBody) {
+                const suppliedTranscript =
+                  typeof retryInput.transcript === 'string'
+                    ? retryInput.transcript.trim()
+                    : ''
+                if (suppliedTranscript) {
+                  if (
+                    row.process_status !== 'waiting-manual-transcription' ||
+                    row.content_kind !== 'video' ||
+                    suppliedTranscript.length < 20
+                  )
+                    return send(response, 400, {
+                      error: 'invalid_transcript',
+                    })
+                  original = {
+                    platform: String(row.source_platform),
+                    sourceType: String(row.source_type),
+                    sourceAccountId: String(row.source_account_id),
+                    sourceAccountName: String(row.source_account_name),
+                    externalContentId: row.external_content_id as
+                      | string
+                      | undefined,
+                    canonicalUrl: row.canonical_url as string | undefined,
+                    title: row.title,
+                    originalTitle: row.original_title ?? undefined,
+                    body: suppliedTranscript,
+                    kind: 'video',
+                    format: 'subtitle',
+                    language: row.original_language === 'zh' ? 'zh' : 'en',
+                    publishedAt: row.published_at as string | undefined,
+                  }
+                  capturedCalls = [
+                    {
+                      action: 'manual-transcription',
+                      stage: 'enriching',
+                      status: 'succeeded',
+                      trigger: 'manual-retry',
+                      request: { contentId: id },
+                      response: { characters: suppliedTranscript.length },
+                    },
+                  ]
+                } else if (originalBody) {
                   original = {
                     platform: String(row.source_platform),
                     sourceType: String(row.source_type),

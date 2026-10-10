@@ -442,6 +442,67 @@ it('only reruns a failed row after an explicit manual retry request', async () =
   }
 })
 
+it('processes a waiting video from a supplied transcript without rediscovering it', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'airadar-video-transcript-'))
+  let service: ReturnType<typeof createSingleTableServiceApp> | undefined
+  try {
+    const configRoot = await initializeSingleTableConfig(
+      path.resolve(import.meta.dirname, '../../../config'),
+      root
+    )
+    const repository = await SingleTableRepository.open(root)
+    const row = await repository.recordUnavailable(
+      {
+        platform: 'x',
+        sourceType: 'x',
+        sourceAccountId: 'x_openai',
+        sourceAccountName: 'OpenAI',
+        externalContentId: 'waiting-video',
+        title: 'Waiting video',
+        kind: 'video',
+        format: 'subtitle',
+        language: 'en',
+      },
+      'Video captions provider is unavailable',
+      true
+    )
+    repository.close()
+    service = createSingleTableServiceApp({
+      dataRoot: root,
+      configRoot,
+      gateway: {
+        async complete() {
+          return {
+            text: '---\nkeywords: ["视频"]\nspam:\n  isJunk: true\n  reason: "低价值"\n---\n完整视频摘要，记录视频内容与可核对的细节。',
+            provider: 'mock',
+            model: 'mock',
+            durationMs: 1,
+          }
+        },
+      },
+    })
+    const address = await service.start({ host: '127.0.0.1', port: 0 })
+    const response = await fetch(
+      `http://${address.host}:${address.port}/api/contents/${row.id}/retry`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          transcript: 'The complete spoken content of this video is available here.',
+        }),
+      }
+    )
+    const reopened = await SingleTableRepository.open(root)
+    expect(response.status, String(reopened.getById(row.id)?.last_error ?? '')).toBe(200)
+    expect(reopened.getById(row.id)?.process_status).toBe('completed')
+    expect(await reopened.readBody(row.id, 'en')).toContain('spoken content')
+    reopened.close()
+  } finally {
+    await service?.stop()
+    await rm(root, { recursive: true })
+  }
+})
+
 it('retries model-failed rows in a persisted batch without reprocessing success', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'airadar-model-batch-'))
   let service: ReturnType<typeof createSingleTableServiceApp> | undefined

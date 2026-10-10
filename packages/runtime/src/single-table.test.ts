@@ -72,6 +72,30 @@ afterEach(async () => {
 })
 
 describe('single-table content storage', () => {
+  it('keeps source HTTP errors out of model retry and includes model response errors', async () => {
+    const { repository } = await setup()
+    const article = await repository.saveOriginal({
+      ...shortPost,
+      externalContentId: 'article-403',
+      canonicalUrl: 'https://example.com/article-403',
+      kind: 'article',
+    })
+    repository.fail(
+      article.id,
+      'enriching',
+      'All providers failed for web_article: native-http: Article request failed with HTTP 403'
+    )
+    const model = await repository.saveOriginal({
+      ...shortPost,
+      externalContentId: 'model-401',
+      canonicalUrl: 'https://x.com/openai/status/model-401',
+    })
+    repository.fail(model.id, 'classifying', '401: Authentication Fails')
+    expect(repository.modelFailureRows().map((row) => row.id)).toEqual([
+      model.id,
+    ])
+  })
+
   it('creates only contents and keeps a stable dated directory across duplicate capture', async () => {
     const { root, repository } = await setup()
     const original = await repository.saveOriginal(shortPost)
