@@ -10,11 +10,10 @@ qiushuiai-airadar 的 TypeScript 工程。Web 界面以 `satnaing/shadcn-admin` 
 
 ```bash
 pnpm install --frozen-lockfile
-pnpm dev:service # 开发接口 43111；另开终端启动网页
-pnpm dev         # 开发网页 5173
+pnpm dev # 启动并使用已安装的正式服务：http://127.0.0.1:43120/
 ```
 
-开发数据默认位于 `~/.qiushuiai-airadar/development-data`。正式使用的数据位于 `~/.qiushuiai-airadar/production-data`，安装版独立使用端口 `43120`。两套数据不能混用。
+日常使用与开发验收统一访问已安装的正式服务 `http://127.0.0.1:43120/`，数据位于 `~/.qiushuiai-airadar/production-data`。修改源码后需构建并更新安装包，页面才会使用新代码。
 
 ```bash
 pnpm check         # 检查、测试、构建、独立安装升级验收
