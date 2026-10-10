@@ -1343,6 +1343,19 @@ export class SingleTableRepository {
       ) as unknown as ContentRow[]
   }
 
+  modelFailureRows(): ContentRow[] {
+    return this.database
+      .prepare(
+        `SELECT * FROM contents WHERE process_status='failed'
+        AND (last_error LIKE '%401%' OR last_error LIKE '%403%'
+          OR last_error LIKE '%402%' OR last_error LIKE '%API key%'
+          OR last_error LIKE '%model%' OR last_error LIKE '%模型%'
+          OR last_error LIKE '%余额不足%' OR last_error LIKE '%额度不足%')
+        ORDER BY first_inflow_at ASC`
+      )
+      .all() as unknown as ContentRow[]
+  }
+
   runtimeOverview(): {
     total: number
     failed: number

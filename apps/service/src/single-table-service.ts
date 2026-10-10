@@ -1,5 +1,6 @@
 import { createServer, type IncomingMessage, type Server } from 'node:http'
-import { readFile } from 'node:fs/promises'
+import { randomUUID } from 'node:crypto'
+import { readFile, rename, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import path from 'node:path'
 
@@ -437,6 +438,15 @@ function send(
   response.end(JSON.stringify(body))
 }
 
+function localOrigin(origin: string | undefined): boolean {
+  if (!origin) return true
+  try {
+    return ['127.0.0.1', '::1', 'localhost'].includes(new URL(origin).hostname)
+  } catch {
+    return false
+  }
+}
+
 export function createSingleTableServiceApp(options: {
   dataRoot: string
   configRoot: string
@@ -458,10 +468,116 @@ export function createSingleTableServiceApp(options: {
   const translationTasks = new Set<Promise<unknown>>()
   let collection: Promise<unknown> | undefined
   let collectionControl: CollectionControl | undefined
+  type RetryBatch = {
+    id: string
+    status: 'running' | 'paused' | 'completed' | 'canceled'
+    ids: string[]
+    cursor: number
+    succeeded: number
+    failed: number
+    message?: string
+  }
+  const batchFile = path.join(options.dataRoot, 'model-retry-batch.json')
+  let batchWorker: Promise<void> | undefined
+  let activeBatch: RetryBatch | undefined
+  const readBatch = async (): Promise<RetryBatch | null> => {
+    if (activeBatch) return activeBatch
+    try {
+      const batch = JSON.parse(await readFile(batchFile, 'utf8')) as RetryBatch
+      if (batch.status === 'running' && !batchWorker) {
+        batch.status = 'paused'
+        batch.message = '服务已重启。请检查模型后手动继续批量重试。'
+        await writeFile(batchFile, JSON.stringify(batch))
+      }
+      return batch
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null
+      throw error
+    }
+  }
+  const saveBatch = (batch: RetryBatch) => {
+    activeBatch = batch
+    return writeFile(batchFile, JSON.stringify(batch))
+  }
   const secretFile = options.secretFile ?? path.join(options.dataRoot, '.env')
   const credentialFile = path.join(options.dataRoot, 'model-auth.json')
   const credentialStore = createFileModelCredentialStore(credentialFile)
+  const pendingCredentialStore = createFileModelCredentialStore(
+    path.join(options.dataRoot, 'model-pending-auth.json')
+  )
   const logins = createProviderLoginManager(credentialStore)
+  const pendingLogins = createProviderLoginManager(pendingCredentialStore)
+  const verificationFile = path.join(
+    options.dataRoot,
+    'model-verification.json'
+  )
+  const verifiedModels = async (): Promise<Record<string, string[]>> => {
+    try {
+      return JSON.parse(await readFile(verificationFile, 'utf8')) as Record<
+        string,
+        string[]
+      >
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return {}
+      throw error
+    }
+  }
+  const recordVerified = async (
+    providerId: string,
+    modelId: string,
+    reset = false
+  ) => {
+    const state = await verifiedModels()
+    state[providerId] = reset
+      ? [modelId]
+      : [...new Set([...(state[providerId] ?? []), modelId])]
+    const temporary = `${verificationFile}.${randomUUID()}.tmp`
+    await writeFile(temporary, JSON.stringify(state), { mode: 0o600 })
+    await rename(temporary, verificationFile)
+  }
+  const testModel = (providerId: string, modelId: string, pending = false) =>
+    options.modelConnectionTest
+      ? options.modelConnectionTest(providerId, modelId)
+      : (pending ? pendingLogins : logins).test(providerId, modelId)
+  const validateRoutes = async (
+    routes: Array<{ provider: string; model: string }>
+  ) => {
+    for (const route of routes.filter(
+      (item, index, all) =>
+        all.findIndex(
+          (other) =>
+            other.provider === item.provider && other.model === item.model
+        ) === index
+    )) {
+      if (!(await credentialStore.read(route.provider)))
+        throw new Error(`${route.provider} 尚未通过连接测试。`)
+      try {
+        await testModel(route.provider, route.model)
+        await recordVerified(route.provider, route.model)
+      } catch {
+        throw new Error(
+          `${route.provider} / ${route.model} 调用失败，请检查密钥、权限或额度。`
+        )
+      }
+    }
+  }
+  const configuredRoutes = async () => {
+    const config = await loadSingleTableConfig(options.configRoot)
+    const provider = normalizeSingleTableProviderId(
+      config.analysis.model.provider
+    )
+    return [
+      { provider, model: config.analysis.model.default },
+      ...Object.values(config.analysis.model.stages ?? {}).map((route) =>
+        typeof route === 'string'
+          ? { provider, model: route }
+          : {
+              provider: normalizeSingleTableProviderId(route.provider),
+              model: route.model,
+            }
+      ),
+    ]
+  }
   const readSecret = async (name: string) => {
     try {
       return await createFileSecretReader(secretFile).get(name)
@@ -491,11 +607,22 @@ export function createSingleTableServiceApp(options: {
         credential.type,
       ])
     )
+    const pendingCredentials = new Map(
+      (await pendingCredentialStore.list()).map((credential) => [
+        credential.providerId,
+        credential.type,
+      ])
+    )
+    const verified = await verifiedModels()
     return Promise.all(
       listSingleTableModelProviders().map(async (provider) => ({
         ...provider,
         active: provider.id === activeProvider,
         configured: credentials.has(provider.id),
+        verified:
+          credentials.has(provider.id) &&
+          Boolean(verified[provider.id]?.length),
+        pending: pendingCredentials.has(provider.id),
         credentialType: credentials.get(provider.id),
         ...(provider.id === 'openai-codex'
           ? {
@@ -514,10 +641,161 @@ export function createSingleTableServiceApp(options: {
         throw new Error('Single-table service only binds locally')
       repository = await SingleTableRepository.open(options.dataRoot)
       const activeRepository = repository
+      const executeBatch = (batch: RetryBatch) => {
+        activeBatch = batch
+        const task = (async () => {
+          const address = server?.address()
+          if (!address || typeof address === 'string') return
+          while (
+            batch.status === 'running' &&
+            batch.cursor < batch.ids.length
+          ) {
+            const id = batch.ids[batch.cursor]!
+            const current = activeRepository.getById(id)
+            if (!current || current.process_status === 'completed') {
+              batch.cursor++
+              await saveBatch(batch)
+              continue
+            }
+            try {
+              const response = await fetch(
+                `http://127.0.0.1:${address.port}/api/contents/${encodeURIComponent(id)}/retry`,
+                {
+                  method: 'POST',
+                  headers: {
+                    'content-type': 'application/json',
+                    'x-model-retry-batch': batch.id,
+                  },
+                  body: '{}',
+                }
+              )
+              if (!response.ok) {
+                batch.failed++
+                batch.status = 'paused'
+                batch.message = '模型重试失败，已暂停。检查模型连接后可继续。'
+                await saveBatch(batch)
+                break
+              }
+              batch.succeeded++
+              batch.cursor++
+              await saveBatch(batch)
+            } catch {
+              batch.failed++
+              batch.status = 'paused'
+              batch.message = '重试请求失败，已暂停。'
+              await saveBatch(batch)
+              break
+            }
+          }
+          if (batch.status === 'running') {
+            batch.status = 'completed'
+            batch.message = '批量重试已完成。'
+            await saveBatch(batch)
+          }
+        })()
+        batchWorker = task.finally(() => {
+          batchWorker = undefined
+        })
+      }
       server = createServer((request, response) => {
         void (async () => {
           const url = new URL(request.url ?? '/', `http://${address.host}`)
           const method = request.method ?? 'GET'
+          if (method === 'GET' && url.pathname === '/api/model-retry/preview') {
+            const rows = activeRepository.modelFailureRows()
+            return send(response, 200, {
+              count: rows.length,
+              estimatedModelCalls: rows.length * 2,
+              message: '仅包含模型错误；实际调用次数取决于内容和翻译环节。',
+            })
+          }
+          if (method === 'GET' && url.pathname === '/api/model-retry')
+            return send(response, 200, { batch: await readBatch() })
+          if (
+            method === 'POST' &&
+            url.pathname.startsWith('/api/model-retry/')
+          ) {
+            if (!localOrigin(request.headers.origin))
+              return send(response, 403, { error: 'origin_not_allowed' })
+            if (
+              !request.headers['content-type']?.startsWith('application/json')
+            )
+              return send(response, 415, { error: 'json_required' })
+          }
+          if (method === 'POST' && url.pathname === '/api/model-retry/start') {
+            await bodyOf(request)
+            const existing = await readBatch()
+            if (existing && ['running', 'paused'].includes(existing.status))
+              return send(response, 409, {
+                message: '已有批量重试任务，请继续或取消。',
+              })
+            if (collection)
+              return send(response, 409, {
+                message: '采集正在运行，请完成后再批量重试。',
+              })
+            if (!options.gateway) {
+              try {
+                await validateRoutes(await configuredRoutes())
+              } catch (error) {
+                return send(response, 409, {
+                  message:
+                    error instanceof Error ? error.message : '模型测试失败。',
+                })
+              }
+            }
+            const ids = activeRepository.modelFailureRows().map((row) => row.id)
+            const batch: RetryBatch = {
+              id: randomUUID(),
+              status: 'running',
+              ids,
+              cursor: 0,
+              succeeded: 0,
+              failed: 0,
+            }
+            await saveBatch(batch)
+            executeBatch(batch)
+            return send(response, 202, { batch })
+          }
+          if (
+            method === 'POST' &&
+            /^\/api\/model-retry\/(pause|resume|cancel)$/u.test(url.pathname)
+          ) {
+            await bodyOf(request)
+            const batch = await readBatch()
+            if (!batch)
+              return send(response, 404, { message: '没有批量重试任务。' })
+            const action = url.pathname.split('/').at(-1)
+            if (action === 'pause' && batch.status === 'running')
+              batch.status = 'paused'
+            else if (
+              action === 'cancel' &&
+              ['running', 'paused'].includes(batch.status)
+            )
+              batch.status = 'canceled'
+            else if (
+              action === 'resume' &&
+              batch.status === 'paused' &&
+              !batchWorker
+            ) {
+              if (!options.gateway) {
+                try {
+                  await validateRoutes(await configuredRoutes())
+                } catch (error) {
+                  return send(response, 409, {
+                    message:
+                      error instanceof Error ? error.message : '模型测试失败。',
+                  })
+                }
+              }
+              batch.status = 'running'
+              executeBatch(batch)
+            } else if (action !== 'resume' || batch.status !== 'running')
+              return send(response, 409, {
+                message: '当前任务不能执行此操作。',
+              })
+            await saveBatch(batch)
+            return send(response, 200, { batch })
+          }
           const loginStatus = /^\/api\/model-login\/([^/]+)$/u.exec(
             url.pathname
           )
@@ -704,23 +982,48 @@ export function createSingleTableServiceApp(options: {
           }
           if (method === 'GET' && url.pathname === '/api/model-providers')
             return send(response, 200, { items: await modelProviders() })
-          if (method === 'POST' && url.pathname === '/api/collection/start') {
+          if (
+            method === 'POST' &&
+            (url.pathname === '/api/collection/start' ||
+              (url.pathname === '/api/collection/resume' && !collection))
+          ) {
+            const restarting = url.pathname.endsWith('/resume')
             const origin = request.headers.origin
-            if (origin && new URL(origin).host !== request.headers.host)
+            if (!localOrigin(origin))
               return send(response, 403, {
                 message: '只能从本机页面启动采集。',
               })
+            const previousRun = await readCollectionRun(options.dataRoot)
+            if (restarting && previousRun?.status !== 'interrupted')
+              return send(response, 409, {
+                message: '当前没有可继续的中断任务。',
+              })
+            if (!restarting && previousRun?.status === 'interrupted')
+              return send(response, 409, {
+                message: '上轮采集中断，请先点击“继续采集”。',
+              })
             if (
               collection ||
-              ['running', 'paused'].includes(
-                (await readCollectionRun(options.dataRoot))?.status ?? ''
-              )
+              ['running', 'paused'].includes(previousRun?.status ?? '')
             )
               return send(response, 409, { message: '已有采集任务正在执行。' })
             if (!options.promptsRoot)
               return send(response, 400, {
                 message: '服务未配置分析提示词目录，无法启动采集。',
               })
+            if (!options.gateway) {
+              try {
+                await validateRoutes(await configuredRoutes())
+              } catch (error) {
+                return send(response, 409, {
+                  error: 'model_preflight_failed',
+                  message:
+                    error instanceof Error
+                      ? error.message
+                      : '模型连接测试失败。',
+                })
+              }
+            }
             let started!: () => void
             let rejected!: (error: unknown) => void
             const ready = new Promise<void>((resolve, reject) => {
@@ -739,6 +1042,7 @@ export function createSingleTableServiceApp(options: {
               provider: options.collectionProvider,
               onStarted: started,
               control,
+              resume: restarting,
             })
               .catch((error: unknown) => {
                 rejected(error)
@@ -749,7 +1053,9 @@ export function createSingleTableServiceApp(options: {
               })
             await ready
             return send(response, 202, {
-              message: '采集已启动，关闭页面后仍会继续执行。',
+              message: restarting
+                ? '已继续上轮采集，已成功内容不会重复分析。'
+                : '采集已启动，关闭页面后仍会继续执行。',
             })
           }
           if (
@@ -758,7 +1064,7 @@ export function createSingleTableServiceApp(options: {
               url.pathname === '/api/collection/resume')
           ) {
             const origin = request.headers.origin
-            if (origin && new URL(origin).host !== request.headers.host)
+            if (!localOrigin(origin))
               return send(response, 403, {
                 message: '只能从本机页面控制采集。',
               })
@@ -773,6 +1079,19 @@ export function createSingleTableServiceApp(options: {
               return send(response, 409, {
                 message: pausing ? '当前任务不能暂停。' : '当前任务没有暂停。',
               })
+            if (!pausing && !options.gateway) {
+              try {
+                await validateRoutes(await configuredRoutes())
+              } catch (error) {
+                return send(response, 409, {
+                  error: 'model_preflight_failed',
+                  message:
+                    error instanceof Error
+                      ? error.message
+                      : '模型连接测试失败。',
+                })
+              }
+            }
             await (pausing
               ? collectionControl.pause()
               : collectionControl.resume())
@@ -932,6 +1251,17 @@ export function createSingleTableServiceApp(options: {
                   error: 'invalid_model',
                   message: '请选择已配置提供商支持的模型。',
                 })
+              try {
+                await validateRoutes(routes)
+              } catch (error) {
+                return send(response, 409, {
+                  error: 'model_preflight_failed',
+                  message:
+                    error instanceof Error
+                      ? error.message
+                      : '模型连接测试失败。',
+                })
+              }
               await saveAnalysisModelConfig(options.configRoot, {
                 provider,
                 default: defaultModel,
@@ -969,7 +1299,10 @@ export function createSingleTableServiceApp(options: {
                       'openai-codex'
                     )
                   if (!imported) throw new Error('Codex credential is missing')
-                  await credentialStore.modify(providerId, async () => imported)
+                  await pendingCredentialStore.modify(
+                    providerId,
+                    async () => imported
+                  )
                 } catch {
                   return send(response, 400, {
                     error: 'invalid_codex_auth',
@@ -989,6 +1322,7 @@ export function createSingleTableServiceApp(options: {
                   })
                 if (body.clearApiKey === true) {
                   await credentialStore.delete(providerId)
+                  await pendingCredentialStore.delete(providerId)
                 } else if (
                   typeof body.apiKey === 'string' &&
                   body.apiKey.trim()
@@ -1005,7 +1339,7 @@ export function createSingleTableServiceApp(options: {
                           )
                         )
                       : undefined
-                  await credentialStore.modify(providerId, async () => ({
+                  await pendingCredentialStore.modify(providerId, async () => ({
                     type: 'api_key',
                     key: body.apiKey!.toString().trim(),
                     ...(env && Object.keys(env).length ? { env } : {}),
@@ -1034,6 +1368,7 @@ export function createSingleTableServiceApp(options: {
                   error: 'model_provider_not_found',
                 })
               await credentialStore.delete(providerId)
+              await pendingCredentialStore.delete(providerId)
               return send(response, 200, {
                 deleted: providerId,
                 providers: await modelProviders(),
@@ -1051,7 +1386,7 @@ export function createSingleTableServiceApp(options: {
                 return send(response, 404, {
                   error: 'model_provider_not_found',
                 })
-              if (!provider.configured)
+              if (!provider.configured && !provider.pending)
                 return send(response, 409, {
                   error: 'model_provider_unconfigured',
                   message: `${provider.name} 凭据尚未配置。`,
@@ -1079,9 +1414,22 @@ export function createSingleTableServiceApp(options: {
                   message: `${provider.name} 暂无可测试的模型。`,
                 })
               try {
-                const result = options.modelConnectionTest
-                  ? await options.modelConnectionTest(providerId, modelId)
-                  : await logins.test(providerId, modelId)
+                const result = await testModel(
+                  providerId,
+                  modelId,
+                  provider.pending
+                )
+                if (provider.pending) {
+                  const candidate =
+                    await pendingCredentialStore.read(providerId)
+                  if (candidate)
+                    await credentialStore.modify(
+                      providerId,
+                      async () => candidate
+                    )
+                  await pendingCredentialStore.delete(providerId)
+                }
+                await recordVerified(providerId, modelId, provider.pending)
                 return send(response, 200, {
                   ...result,
                   message: `${provider.name} 连通性测试成功，模型 ${modelId} 已响应。`,
@@ -1505,6 +1853,22 @@ export function createSingleTableServiceApp(options: {
                 row.process_status !== 'waiting-manual-transcription'
               )
                 return send(response, 409, { error: 'content_not_retryable' })
+              if (
+                !options.gateway &&
+                request.headers['x-model-retry-batch'] !== activeBatch?.id
+              ) {
+                try {
+                  await validateRoutes(await configuredRoutes())
+                } catch (error) {
+                  return send(response, 409, {
+                    error: 'model_preflight_failed',
+                    message:
+                      error instanceof Error
+                        ? error.message
+                        : '模型连接测试失败。',
+                  })
+                }
+              }
               retrying.add(id)
               try {
                 const config = await loadSingleTableConfig(options.configRoot)
@@ -1789,12 +2153,19 @@ export function createSingleTableServiceApp(options: {
     },
     async stop() {
       logins.stop()
-      await collectionControl?.resume()
+      if ((await readCollectionRun(options.dataRoot))?.status === 'paused')
+        collectionControl?.interrupt()
+      if (activeBatch?.status === 'running') {
+        activeBatch.status = 'paused'
+        activeBatch.message = '服务已停止，请重新验证模型后继续。'
+        await saveBatch(activeBatch)
+      }
       const current = server
       server = undefined
       if (current)
         await new Promise<void>((resolve) => current.close(() => resolve()))
       await collection
+      await batchWorker
       await Promise.allSettled([...translationTasks])
       repository?.close()
       repository = undefined

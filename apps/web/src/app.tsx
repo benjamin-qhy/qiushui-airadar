@@ -13,7 +13,15 @@ export { ContentCard } from '@/features/content-workspace'
 export type { FeedItem } from '@/types'
 
 export function App() {
-  const [page, setPage] = useState<PageKey>('daily')
+  const initialPage =
+    typeof window === 'undefined'
+      ? null
+      : new URLSearchParams(window.location.search).get('page')
+  const [page, setPage] = useState<PageKey>(
+    initialPage === 'models' || initialPage === 'exceptions'
+      ? initialPage
+      : 'daily'
+  )
   return (
     <AppShell page={page} onPage={setPage}>
       {page === 'daily' ? (

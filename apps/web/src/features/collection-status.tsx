@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { api } from '@/lib/api'
 import { CollectionControls, type CollectionData } from './collection-controls'
+import { ModelRetryControls } from './model-retry-controls'
 
 export type { CollectionData } from './collection-controls'
 const time = (value?: string) =>
@@ -57,10 +58,20 @@ export function CollectionStatus({ initial }: { initial: CollectionData }) {
     (sum, source) => ({
       discovered: sum.discovered + source.discovered,
       completed: sum.completed + source.completed,
+      newlyCompleted: sum.newlyCompleted + (source.newlyCompleted ?? 0),
+      existingCompleted:
+        sum.existingCompleted + (source.existingCompleted ?? 0),
       failed: sum.failed + source.failed,
       skipped: sum.skipped + source.skipped,
     }),
-    { discovered: 0, completed: 0, failed: 0, skipped: 0 }
+    {
+      discovered: 0,
+      completed: 0,
+      newlyCompleted: 0,
+      existingCompleted: 0,
+      failed: 0,
+      skipped: 0,
+    }
   )
   return (
     <div className='mx-auto max-w-6xl space-y-8'>
@@ -88,7 +99,30 @@ export function CollectionStatus({ initial }: { initial: CollectionData }) {
             {error}
           </p>
         )}
-        {run?.message && <p className='text-sm'>{run.message}</p>}
+        {run?.message && (
+          <div
+            role={
+              ['paused', 'interrupted'].includes(run.status) &&
+              run.message.includes('模型调用失败')
+                ? 'alert'
+                : undefined
+            }
+            className={
+              ['paused', 'interrupted'].includes(run.status) &&
+              run.message.includes('模型调用失败')
+                ? 'border border-destructive/40 bg-destructive/5 p-4 text-sm'
+                : 'text-sm'
+            }
+          >
+            <p>{run.message}</p>
+            {['paused', 'interrupted'].includes(run.status) &&
+              run.message.includes('模型调用失败') && (
+                <a className='mt-2 inline-block underline' href='/?page=models'>
+                  检查模型配置与连接测试
+                </a>
+              )}
+          </div>
+        )}
         {run && (
           <>
             <div className='flex justify-between text-sm'>
@@ -110,10 +144,11 @@ export function CollectionStatus({ initial }: { initial: CollectionData }) {
                 : `最近进度：${time(run.updatedAt)}`}
               （北京时间）
             </p>
-            <div className='grid grid-cols-2 gap-4 border-t pt-4 sm:grid-cols-4'>
+            <div className='grid grid-cols-2 gap-4 border-t pt-4 sm:grid-cols-5'>
               {[
                 ['本轮发现', totals?.discovered],
-                ['处理成功（含已有）', totals?.completed],
+                ['本轮新处理成功', totals?.newlyCompleted],
+                ['已有成功内容', totals?.existingCompleted],
                 ['异常 / 待处理', totals?.failed],
                 ['跳过已有或排除项', totals?.skipped],
               ].map(([name, value]) => (
@@ -200,6 +235,7 @@ export function CollectionStatus({ initial }: { initial: CollectionData }) {
           查看正文请前往“全部内容”；处理失败和转写请前往“异常数据”。
         </p>
       </section>
+      <ModelRetryControls />
     </div>
   )
 }

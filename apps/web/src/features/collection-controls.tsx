@@ -15,6 +15,8 @@ export interface CollectionRun {
     status: string
     discovered: number
     completed: number
+    newlyCompleted?: number
+    existingCompleted?: number
     failed: number
     skipped: number
   }>
@@ -62,20 +64,29 @@ export function CollectionControls({
     <div className='space-y-2' aria-live='polite'>
       <div className='flex flex-wrap gap-2'>
         <Button
-          disabled={status === 'running' || status === 'paused' || !!pending}
+          disabled={
+            status === 'running' ||
+            status === 'paused' ||
+            status === 'interrupted' ||
+            !!pending
+          }
           onClick={() => void run('start')}
         >
           <Play className='size-4' />
           {pending === 'start' ? '正在启动…' : '手工采集'}
         </Button>
-        {status === 'paused' ? (
+        {status === 'paused' || status === 'interrupted' ? (
           <Button
             variant='outline'
             disabled={!!pending}
             onClick={() => void run('resume')}
           >
             <RotateCcw className='size-4' />
-            {pending === 'resume' ? '正在恢复…' : '恢复采集'}
+            {pending === 'resume'
+              ? '正在恢复…'
+              : status === 'interrupted'
+                ? '继续上轮采集'
+                : '恢复采集'}
           </Button>
         ) : (
           <Button

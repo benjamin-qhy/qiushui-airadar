@@ -3,7 +3,10 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { expect, it } from 'vitest'
 import { beginCollectionRun, readCollectionRun } from './collection-run.js'
-import { collectSingleTable } from './collect-single-table.js'
+import {
+  collectSingleTable,
+  createCollectionControl,
+} from './collect-single-table.js'
 import { createSingleTableServiceApp } from './single-table-service.js'
 
 it('starts asynchronously via HTTP, prevents duplicate starts and reports final progress', async () => {
@@ -159,6 +162,124 @@ it('persists progress, rejects overlapping runs and detects an exited owner', as
     const next = await beginCollectionRun(root)
     await next.release()
   } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+it('continues an interrupted collection with its original run id', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'airadar-continued-run-'))
+  const { initializeSingleTableConfig } =
+    await import('@qiushuiai-airadar/config')
+  const configRoot = await initializeSingleTableConfig(
+    path.resolve(import.meta.dirname, '../../../config'),
+    root
+  )
+  const previous = await beginCollectionRun(root)
+  const id = previous.run.id
+  previous.run.pid = 2147483647
+  await previous.save()
+  await previous.release()
+  const service = createSingleTableServiceApp({
+    dataRoot: root,
+    configRoot,
+    promptsRoot: 'unused',
+    gateway: {
+      complete: async () => {
+        throw new Error('unexpected model call')
+      },
+    },
+    collectionProvider: {
+      discover: async () => ({ items: [], request: {}, response: {} }),
+      resolve: async () => {
+        throw new Error('unexpected resolve')
+      },
+    },
+  })
+  try {
+    const { port } = await service.start({ host: '127.0.0.1', port: 0 })
+    const url = `http://127.0.0.1:${port}`
+    expect(
+      (await fetch(`${url}/api/collection/resume`, { method: 'POST' })).status
+    ).toBe(202)
+    for (let attempt = 0; attempt < 50; attempt++) {
+      if ((await readCollectionRun(root))?.status === 'completed') break
+      await new Promise((resolve) => setTimeout(resolve, 10))
+    }
+    const run = await readCollectionRun(root)
+    expect(run?.status).toBe('completed')
+    expect(run?.id).toBe(id)
+  } finally {
+    await service.stop()
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+it('pauses the entire run when a model rejects authentication', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'airadar-model-pause-'))
+  const { initializeSingleTableConfig } =
+    await import('@qiushuiai-airadar/config')
+  const configRoot = await initializeSingleTableConfig(
+    path.resolve(import.meta.dirname, '../../../config'),
+    root
+  )
+  await writeFile(
+    path.join(configRoot, 'sources.yaml'),
+    'sources:\n  - {id: test, platform: x, account_name: Test, external_identity: test, language: zh, enabled: true}\n'
+  )
+  const control = createCollectionControl()
+  const task = collectSingleTable({
+    dataRoot: root,
+    templateRoot: configRoot,
+    promptsRoot: path.resolve(
+      import.meta.dirname,
+      '../../../docs/prompts/single-table-content'
+    ),
+    control,
+    gateway: {
+      getCapacity: () => ({
+        contextWindow: 32000,
+        maxOutputTokens: 8000,
+        provider: 'deepseek',
+        model: 'deepseek-v4-pro',
+      }),
+      complete: async () => {
+        throw new Error('HTTP 401 invalid API key')
+      },
+    },
+    provider: {
+      discover: async () => ({
+        items: [{ externalId: 'item', title: '测试', kind: 'short_post' }],
+        request: {},
+        response: {},
+      }),
+      resolve: async () => ({
+        original: {
+          platform: 'x',
+          sourceType: 'x',
+          sourceAccountId: 'test',
+          sourceAccountName: 'Test',
+          externalContentId: 'item',
+          title: '测试',
+          body: '测试内容',
+          kind: 'short_post',
+          format: 'plain_text',
+          language: 'zh',
+        },
+      }),
+    },
+  })
+  try {
+    for (let attempt = 0; attempt < 50; attempt++) {
+      if ((await readCollectionRun(root))?.status === 'paused') break
+      await new Promise((resolve) => setTimeout(resolve, 10))
+    }
+    const run = await readCollectionRun(root)
+    expect(run?.status).toBe('paused')
+    expect(run?.message).toContain('认证失败')
+    expect(run?.message).toContain('deepseek')
+  } finally {
+    control.interrupt()
+    await task.catch(() => undefined)
     await rm(root, { recursive: true, force: true })
   }
 })
