@@ -73,6 +73,11 @@ export function CollectionStatus({ initial }: { initial: CollectionData }) {
       skipped: 0,
     }
   )
+  const hasBreakdown = run?.sources.every(
+    (source) =>
+      source.newlyCompleted !== undefined &&
+      source.existingCompleted !== undefined
+  )
   return (
     <div className='mx-auto max-w-6xl space-y-8'>
       <section className='space-y-4' aria-live='polite'>
@@ -147,8 +152,12 @@ export function CollectionStatus({ initial }: { initial: CollectionData }) {
             <div className='grid grid-cols-2 gap-4 border-t pt-4 sm:grid-cols-5'>
               {[
                 ['本轮发现', totals?.discovered],
-                ['本轮新处理成功', totals?.newlyCompleted],
-                ['已有成功内容', totals?.existingCompleted],
+                ...(hasBreakdown
+                  ? ([
+                      ['本轮新处理成功', totals?.newlyCompleted],
+                      ['已有成功内容', totals?.existingCompleted],
+                    ] as const)
+                  : ([['处理成功（含已有）', totals?.completed]] as const)),
                 ['异常 / 待处理', totals?.failed],
                 ['跳过已有或排除项', totals?.skipped],
               ].map(([name, value]) => (
@@ -158,6 +167,11 @@ export function CollectionStatus({ initial }: { initial: CollectionData }) {
                 </div>
               ))}
             </div>
+            {!hasBreakdown && (
+              <p className='text-xs text-muted-foreground'>
+                这轮采集发生在升级前，无法拆分新处理和已有内容。
+              </p>
+            )}
           </>
         )}
       </section>
