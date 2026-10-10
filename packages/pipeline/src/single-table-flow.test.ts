@@ -162,6 +162,40 @@ describe('single-table AI flow', () => {
     expect(result.chinese_markdown_path).toBeNull()
   })
 
+  it('accepts empty keywords and summary when a long item is junk', async () => {
+    const { result, calls } = await fixture(
+      {
+        classify:
+          '---\nkeywords: []\nspam:\n  isJunk: true\n  reason: "纯广告"\n---',
+      },
+      10,
+      {
+        ...original,
+        externalContentId: 'junk-article',
+        kind: 'article',
+        canonicalUrl: 'https://example.com/junk-article',
+        body: 'This promotional article has no useful content.',
+      }
+    )
+    expect(calls.map((call) => call.stage)).toEqual(['classify'])
+    expect(result.process_status).toBe('completed')
+    expect(result.keywords_json).toBe('[]')
+  })
+
+  it('caps excess model keywords instead of failing classification', async () => {
+    const { result } = await fixture({
+      classify:
+        '---\nkeywords: ["a", "b", "c", "d", "e", "f"]\nspam:\n  isJunk: true\n  reason: "广告"\n---',
+    })
+    expect(JSON.parse(String(result.keywords_json))).toEqual([
+      'a',
+      'b',
+      'c',
+      'd',
+      'e',
+    ])
+  })
+
   it('scores low-value English without translating', async () => {
     const { result, calls } = await fixture(
       {

@@ -928,11 +928,10 @@ export class SingleTableRepository {
     const row = this.getById(id)
     if (!row) throw new Error('Content not found')
     if (
-      !input.keywords.length ||
       input.keywords.length > 5 ||
       input.keywords.some((word) => !word.trim())
     )
-      throw new Error('Expected 1–5 keywords')
+      throw new Error('Expected up to 5 non-empty keywords')
     const now = new Date().toISOString()
     const isJunk =
       row.junk_source === 'manual' ? Boolean(row.is_junk) : input.isJunk

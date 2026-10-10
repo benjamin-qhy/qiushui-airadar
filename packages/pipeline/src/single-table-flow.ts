@@ -38,7 +38,9 @@ const promptNames = {
 } as const
 
 const classificationSchema = z.object({
-  keywords: z.array(z.string().trim().min(1)).min(1).max(5),
+  keywords: z.array(z.string()).transform((items) =>
+    [...new Set(items.map((item) => item.trim()).filter(Boolean))].slice(0, 5)
+  ),
   spam: z.object({ isJunk: z.boolean(), reason: z.string().nullable() }),
 })
 const scoreSchema = z.object({
@@ -515,7 +517,7 @@ export async function processSingleTableContent(
     (text) => {
       const parsed = parseFrontmatter(text)
       const attributes = classificationSchema.parse(parsed.attributes)
-      if (isLong && !parsed.body)
+      if (isLong && !parsed.body && !attributes.spam.isJunk)
         throw new Error('Long content summary is missing')
       return { ...attributes, body: parsed.body }
     }
