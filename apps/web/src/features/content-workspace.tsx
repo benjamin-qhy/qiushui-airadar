@@ -7,6 +7,7 @@ import {
   type MouseEvent,
 } from 'react'
 import ReactMarkdown from 'react-markdown'
+import Masonry from 'react-responsive-masonry'
 import remarkGfm from 'remark-gfm'
 import {
   ArrowDownWideNarrow,
@@ -1701,20 +1702,34 @@ export function ContentWorkspace({ scope }: { scope: ContentScope }) {
   const selectedCardWidth =
     cardWidthOptions.find((option) => option.value === cardWidth) ??
     cardWidthOptions[1]
+  const [masonryColumns, setMasonryColumns] = useState(3)
+  useEffect(() => {
+    const container = scrollRef.current
+    if (!container) return
+    const updateColumns = () => {
+      const availableWidth = container.clientWidth - 32 // p-4 on both sides
+      const gap = 12 // gap-3
+      setMasonryColumns(
+        Math.max(
+          1,
+          Math.floor(
+            (availableWidth + gap) / (selectedCardWidth.pixels + gap)
+          )
+        )
+      )
+    }
+    updateColumns()
+    const observer = new ResizeObserver(updateColumns)
+    observer.observe(container)
+    return () => observer.disconnect()
+  }, [selectedCardWidth.pixels])
   const renderMasonry = (group: FeedItem[]) => (
-    <div
-      data-view='masonry'
-      className='w-full'
-      style={{
-        columnGap: '0.75rem',
-        columnWidth: `${selectedCardWidth.pixels}px`,
-      }}
-    >
-      {group.map((item) => (
-        <div key={item.id} className='mb-3 break-inside-avoid'>
-          {renderCard(item)}
-        </div>
-      ))}
+    <div data-view='masonry' className='w-full'>
+      <Masonry columnsCount={masonryColumns} gutter='12px' sequential>
+        {group.map((item) => (
+          <div key={item.id}>{renderCard(item)}</div>
+        ))}
+      </Masonry>
     </div>
   )
   const renderTable = (group: FeedItem[]) => (
