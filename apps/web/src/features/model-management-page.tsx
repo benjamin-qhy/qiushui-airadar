@@ -36,6 +36,8 @@ interface ModelProviderItem {
   modelCount: number
   active: boolean
   configured: boolean
+  verified?: boolean
+  pending?: boolean
   credentialType?: 'api_key' | 'oauth'
   authPath?: string
   usesDefaultPath?: boolean
@@ -195,7 +197,9 @@ export function ModelManagementPage() {
         apiKey,
         env,
       })
-      setMessage(`${provider.name} 凭据已保存，密钥不会回显。`)
+      setMessage(
+        `${provider.name} 新凭据已暂存。请点击“测试连通性”，成功后才会启用。`
+      )
       setApiKey('')
       await Promise.all([loadProviders(), loadModels()])
     } catch (error) {
@@ -211,6 +215,7 @@ export function ModelManagementPage() {
         {}
       )
       setMessage(result.message)
+      await Promise.all([loadProviders(), loadModels()])
     } catch (error) {
       setMessage(error instanceof Error ? error.message : String(error))
     } finally {
@@ -330,12 +335,19 @@ export function ModelManagementPage() {
                         </p>
                       </div>
                       <div className='flex items-center gap-2 text-sm'>
-                        {selectedProvider.configured ? (
+                        {selectedProvider.verified &&
+                        !selectedProvider.pending ? (
                           <CheckCircle2 className='size-4 text-blue-500' />
                         ) : (
                           <CircleAlert className='size-4 text-muted-foreground' />
                         )}
-                        {selectedProvider.configured ? '已配置' : '未配置'}
+                        {selectedProvider.pending
+                          ? '新凭据待验证'
+                          : selectedProvider.verified
+                            ? '已通过连接测试'
+                            : selectedProvider.configured
+                              ? '凭据已保存，待测试'
+                              : '未配置'}
                       </div>
                     </div>
                     <div className='mt-5 bg-foreground/[0.025] p-4'>
@@ -364,7 +376,7 @@ export function ModelManagementPage() {
                             配置 API 凭据
                           </h3>
                           <p className='mt-1 text-sm text-muted-foreground'>
-                            保存后只显示配置状态，不会回显密钥内容。
+                            保存后需测试连通性，测试通过才启用新凭据；密钥不会回显。
                           </p>
                         </div>
                         <label className='grid gap-1.5 text-sm'>
@@ -411,7 +423,8 @@ export function ModelManagementPage() {
                       </div>
                     )}
                     <div className='mt-7 flex flex-wrap gap-2 border-t pt-4'>
-                      {selectedProvider.configured && (
+                      {(selectedProvider.configured ||
+                        selectedProvider.pending) && (
                         <>
                           <Button
                             variant='outline'

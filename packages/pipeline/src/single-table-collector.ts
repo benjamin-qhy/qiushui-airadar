@@ -60,6 +60,9 @@ export interface SingleTableSourceProvider {
 }
 
 export interface CollectSourcesOptions {
+  resumeIncomplete?: boolean
+  resumeStartedAt?: string
+  runStartedAt?: string
   sources: ConfiguredSource[]
   provider: SingleTableSourceProvider
   repository: SingleTableRepository
@@ -77,7 +80,8 @@ export interface CollectSourcesOptions {
   onProgress?: (
     source: ConfiguredSource,
     result: SourceRunResult,
-    finished: boolean
+    finished: boolean,
+    breakdown: { newlyCompleted: number; existingCompleted: number }
   ) => Promise<void>
   onError?: (
     source: ConfiguredSource,
@@ -140,20 +144,21 @@ export async function collectSourcesSerially(
       failed: 0,
       skipped: 0,
     }
+    const breakdown = { newlyCompleted: 0, existingCompleted: 0 }
     results.push(result)
-    await options.onProgress?.(source, result, false)
+    await options.onProgress?.(source, result, false, breakdown)
     let page: SinglePageDiscovery
     try {
       page = await options.provider.discover(source)
     } catch (error) {
       result.failed++
       options.onError?.(source, undefined, error)
-      await options.onProgress?.(source, result, true)
+      await options.onProgress?.(source, result, true, breakdown)
       continue
     }
     await options.waitUntilRunnable?.()
     result.discovered = page.items.length
-    await options.onProgress?.(source, result, false)
+    await options.onProgress?.(source, result, false, breakdown)
     for (const item of page.items) {
       await options.waitUntilRunnable?.()
       let original: OriginalContent | undefined
@@ -162,15 +167,28 @@ export async function collectSourcesSerially(
         const earlyExisting = earlyIdentity
           ? options.repository.get(earlyIdentity.key)
           : undefined
-        if (earlyExisting) {
+        if (
+          earlyExisting &&
+          (!options.resumeIncomplete ||
+            earlyExisting.process_status === 'completed' ||
+            String(earlyExisting.created_at ?? '') <
+              (options.resumeStartedAt ?? ''))
+        ) {
           if (item.interaction)
             options.repository.updateInteractionBySourceId(
               source.id,
               item.externalId,
               item.interaction
             )
-          if (earlyExisting.process_status === 'completed') result.completed++
-          else result.skipped++
+          if (earlyExisting.process_status === 'completed') {
+            result.completed++
+            if (
+              options.runStartedAt &&
+              String(earlyExisting.created_at ?? '') >= options.runStartedAt
+            )
+              breakdown.newlyCompleted++
+            else breakdown.existingCompleted++
+          } else result.skipped++
           continue
         }
         const nonArticleReason =
@@ -218,11 +236,23 @@ export async function collectSourcesSerially(
         const existing = options.repository.get(
           contentIdentity(resolved.original).key
         )
-        if (existing) {
+        if (
+          existing &&
+          (!options.resumeIncomplete ||
+            existing.process_status === 'completed' ||
+            String(existing.created_at ?? '') < (options.resumeStartedAt ?? ''))
+        ) {
           // Existing failures require an explicit manual retry; a new list
           // fetch must never silently repair or reprocess them.
-          if (existing.process_status === 'completed') result.completed++
-          else result.skipped++
+          if (existing.process_status === 'completed') {
+            result.completed++
+            if (
+              options.runStartedAt &&
+              String(existing.created_at ?? '') >= options.runStartedAt
+            )
+              breakdown.newlyCompleted++
+            else breakdown.existingCompleted++
+          } else result.skipped++
           continue
         }
         await processSingleTableContent({
@@ -248,6 +278,7 @@ export async function collectSourcesSerially(
           ],
         })
         result.completed++
+        breakdown.newlyCompleted++
       } catch (error) {
         result.failed++
         try {
@@ -287,7 +318,7 @@ export async function collectSourcesSerially(
         options.onError?.(source, item, error)
         if (isProviderBalanceFailure(error)) break
       } finally {
-        await options.onProgress?.(source, result, false)
+        await options.onProgress?.(source, result, false, breakdown)
         if (item.interaction)
           options.repository.updateInteractionBySourceId(
             source.id,
@@ -298,7 +329,7 @@ export async function collectSourcesSerially(
     }
     await options.waitUntilRunnable?.()
     if (options.afterSource) await options.afterSource(source, result, page)
-    await options.onProgress?.(source, result, true)
+    await options.onProgress?.(source, result, true, breakdown)
   }
   return results
 }

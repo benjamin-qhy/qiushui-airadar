@@ -124,7 +124,7 @@ export async function runCli(
     const port = portText ? Number(portText) : 43120
     if (
       !host ||
-      !['127.0.0.1', '::1'].includes(host) ||
+      !['127.0.0.1', '::1', '0.0.0.0'].includes(host) ||
       (portIndex >= 0 && !portText) ||
       !Number.isInteger(port) ||
       port < 0 ||

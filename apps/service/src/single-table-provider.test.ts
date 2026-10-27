@@ -2,6 +2,73 @@ import { expect, it, vi } from 'vitest'
 
 import { createSingleTableSourceProvider } from './single-table-provider.js'
 
+it('uses local X video transcription only when a transcriber is supplied', async () => {
+  const source = {
+    id: 'x-example',
+    platform: 'x',
+    account_name: 'X / Example',
+    external_identity: 'Example',
+    language: 'en' as const,
+    enabled: true,
+  }
+  const item = {
+    externalId: 'video-1',
+    url: 'https://x.com/Example/status/video-1',
+    title: 'Video',
+    kind: 'video' as const,
+  }
+  await expect(
+    createSingleTableSourceProvider({}).resolve(source, item)
+  ).rejects.toThrow('Video captions provider is unavailable')
+  const transcribe = vi.fn(async () => 'Complete spoken content of the video.')
+  const resolved = await createSingleTableSourceProvider({
+    xVideoTranscriber: transcribe,
+  }).resolve(source, item)
+  expect(transcribe).toHaveBeenCalledWith(item.url)
+  expect(resolved.original).toMatchObject({
+    body: 'Complete spoken content of the video.',
+    format: 'subtitle',
+  })
+})
+
+it('uses platform captions for a YouTube video discovered from X', async () => {
+  const calls: string[] = []
+  const provider = createSingleTableSourceProvider({
+    tikHubToken: 'test-only',
+    fetch: async (url) => {
+      calls.push(String(url))
+      return calls.length === 1
+        ? Response.json({
+            code: 200,
+            data: { captions: [{ language_code: 'en' }] },
+          })
+        : Response.json({
+            code: 200,
+            data: { text: 'Complete caption text from YouTube.' },
+          })
+    },
+  })
+  const resolved = await provider.resolve(
+    {
+      id: 'x-example',
+      platform: 'x',
+      account_name: 'X / Example',
+      external_identity: 'Example',
+      language: 'en',
+      enabled: true,
+    },
+    {
+      externalId: 'tweet-id',
+      url: 'https://www.youtube.com/watch?v=oVKGKdIAgtg',
+      title: 'Linked video',
+      kind: 'video',
+    }
+  )
+  expect(resolved.original.body).toBe('Complete caption text from YouTube.')
+  expect(calls).toHaveLength(2)
+  expect(calls[0]).toContain('oVKGKdIAgtg')
+})
+
 it('discovers one RSS page, fetches article body, and records both requests and responses', async () => {
   const requested: string[] = []
   const articleText =

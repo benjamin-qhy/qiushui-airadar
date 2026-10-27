@@ -190,6 +190,14 @@ describe('stable platform identity', () => {
     ).toBe('活动页：活动报名与介绍，不是文章正文')
     expect(
       classifyNonArticlePage(
+        'https://aws-experience.com/apj/smb/e/0700a/architecting-flexible-agentic-ai'
+      )
+    ).toBe('活动页：工作坊报名与介绍，不是文章正文')
+    expect(
+      classifyNonArticlePage('https://claude.ai/artifact/example')
+    ).toBe('互动作品：游戏或应用，不是文章正文')
+    expect(
+      classifyNonArticlePage(
         'https://chatgpt.com/plugins?category=small-business'
       )
     ).toBe('目录页：插件列表，不是单篇文章')

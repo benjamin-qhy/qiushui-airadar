@@ -100,15 +100,15 @@ it('classifies an X plugin directory as rule junk without fetching an article or
     is_junk: 1,
     junk_source: 'rule',
     junk_reason: '目录页：插件列表，不是单篇文章',
-    process_status: 'failed',
+    process_status: 'completed',
   })
   expect(await collectSourcesSerially(input)).toEqual([
     {
       sourceId: 'x_openai',
       discovered: 1,
-      completed: 0,
+      completed: 1,
       failed: 0,
-      skipped: 1,
+      skipped: 0,
     },
   ])
   expect(repository.search({ sourceAccountId: 'x_openai' })).toHaveLength(1)

@@ -13,6 +13,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { Switch } from '@/components/ui/switch'
 import { Textarea } from '@/components/ui/textarea'
 import { api, post, put } from '@/lib/api'
 import type { SourceItem } from '@/types'
@@ -45,6 +46,8 @@ export function ConfigPage() {
     affectedSources: number
   }>()
   const [message, setMessage] = useState('')
+  const [transcriptionEnabled, setTranscriptionEnabled] = useState(false)
+  const [transcriptionBusy, setTranscriptionBusy] = useState(false)
   const [sources, setSources] = useState<SourceItem[]>([])
   const [scopeLevel, setScopeLevel] = useState<
     'global' | 'sourceType' | 'source'
@@ -80,6 +83,11 @@ export function ConfigPage() {
   useEffect(() => {
     void load()
   }, [load])
+  useEffect(() => {
+    void api<{ enabled: boolean }>('/api/transcription')
+      .then(({ enabled }) => setTranscriptionEnabled(enabled))
+      .catch(() => undefined)
+  }, [])
   useEffect(() => {
     void api<{ items: SourceItem[] }>('/api/sources').then((value) => {
       setSources(value.items)
@@ -119,6 +127,44 @@ export function ConfigPage() {
         />
         <div className='min-h-0 flex-1 overflow-y-auto overscroll-contain p-4 pb-24 md:p-6 lg:pb-6'>
           <div className='mx-auto max-w-4xl space-y-6'>
+            <section className='border-t pt-4'>
+              <div className='flex items-center justify-between gap-4'>
+                <div>
+                  <label
+                    htmlFor='auto-transcription'
+                    className='text-sm font-medium'
+                  >
+                    自动音频转写
+                  </label>
+                  <p className='mt-1 text-sm text-muted-foreground'>
+                    默认关闭。开启后，新采集的无字幕 X
+                    视频会尝试在本机转写；失败时仍保留待处理状态。
+                  </p>
+                </div>
+                <Switch
+                  id='auto-transcription'
+                  checked={transcriptionEnabled}
+                  disabled={transcriptionBusy}
+                  onCheckedChange={(enabled) => {
+                    setTranscriptionBusy(true)
+                    void put<{ enabled: boolean }>('/api/transcription', {
+                      enabled,
+                    })
+                      .then((result) => {
+                        setTranscriptionEnabled(result.enabled)
+                        setMessage(
+                          result.enabled
+                            ? '自动音频转写已开启，从下次采集开始生效。'
+                            : '自动音频转写已关闭。'
+                        )
+                        void load()
+                      })
+                      .catch((error) => setMessage(String(error)))
+                      .finally(() => setTranscriptionBusy(false))
+                  }}
+                />
+              </div>
+            </section>
             {fileData.files.map((file) => (
               <section key={file.name} className='border-t pt-4'>
                 <div className='flex items-center justify-between gap-3'>

@@ -1700,6 +1700,7 @@ describe('analysis and end-to-end orchestration', () => {
       ruleVersion: 'rules-1',
       modelRouteVersion: 'route-1',
       limit: 20,
+      now: new Date('2026-09-14T12:00:00Z'),
     }
     const first = await runRssPipeline(options)
     expect(first.succeeded).toBe(1)
@@ -1837,6 +1838,8 @@ describe('analysis and end-to-end orchestration', () => {
       ruleVersion: 'rules-1',
       modelRouteVersion: 'route-1',
       limit: 1,
+      now: new Date('2026-09-14T12:00:00Z'),
+      initialLookbackDays: 60,
     }
     expect((await runRssPipeline(options)).discovered).toBe(1)
     expect((await runRssPipeline(options)).discovered).toBe(0)

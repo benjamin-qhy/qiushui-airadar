@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest'
 import { App, ContentCard, type FeedItem } from './app.js'
 import { Detail } from './features/content-workspace.js'
 import { CollectionProvidersPanel } from './features/collection-providers-panel.js'
+import { CollectionStatus } from './features/collection-status.js'
 import {
   filterContentItems,
   filterContentScope,
@@ -25,6 +26,33 @@ const item: FeedItem = {
 }
 
 describe('complete web shell', () => {
+  it('shows an honest combined total for collection runs recorded before the upgrade', () => {
+    const html = renderToStaticMarkup(
+      <CollectionStatus
+        initial={{
+          collection: {
+            status: 'completed',
+            startedAt: '2026-10-10T14:11:14.254Z',
+            updatedAt: '2026-10-10T14:12:50.464Z',
+            sources: [
+              {
+                sourceId: 'old-source',
+                name: 'Old source',
+                status: 'completed',
+                discovered: 10,
+                completed: 4,
+                failed: 0,
+                skipped: 6,
+              },
+            ],
+          },
+        }}
+      />
+    )
+    expect(html).toContain('处理成功（含已有）')
+    expect(html).toContain('这轮采集发生在升级前')
+    expect(html).not.toContain('本轮新处理成功')
+  })
   it('separates collection providers from business interface routing', () => {
     const html = renderToStaticMarkup(<CollectionProvidersPanel />)
     expect(html).toContain('采集供应商配置')

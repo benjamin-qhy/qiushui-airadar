@@ -21,6 +21,8 @@ export interface CollectionRun {
     SourceRunResult & {
       name: string
       status: 'pending' | 'running' | 'completed'
+      newlyCompleted?: number
+      existingCompleted?: number
     }
   >
   message?: string
@@ -38,6 +40,7 @@ export interface CollectionRunEvent {
     | 'source-completed'
     | 'collection-completed'
     | 'collection-failed'
+    | 'collection-interrupted'
   status: 'running' | 'paused' | 'succeeded' | 'failed'
   sourceId?: string
   sourceName?: string
@@ -75,8 +78,9 @@ export async function readCollectionRun(
       !alive(run.pid)
     ) {
       run.status = 'interrupted'
-      run.message =
-        '采集进程已退出，本轮未完成。可以重新执行；已有内容不会重复分析。'
+      run.message = run.message?.includes('模型调用失败')
+        ? `${run.message} 服务已重启，验证模型后点击“继续上轮采集”。`
+        : '采集进程已退出，本轮未完成。点击“继续上轮采集”；已成功内容不会重复分析。'
     }
     return run
   } catch (error) {
@@ -85,7 +89,7 @@ export async function readCollectionRun(
   }
 }
 
-export async function beginCollectionRun(root: string) {
+export async function beginCollectionRun(root: string, resume = false) {
   await mkdir(root, { recursive: true })
   const lock = path.join(root, 'collection.lock')
   try {
@@ -99,17 +103,30 @@ export async function beginCollectionRun(root: string) {
   const handle = await open(lock, 'wx')
   await handle.writeFile(String(process.pid))
   await handle.close()
-  const run: CollectionRun = {
-    id: randomUUID(),
-    pid: process.pid,
-    status: 'running',
-    startedAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
-    sources: [],
-    events: [],
-  }
+  const previous = resume ? await readCollectionRun(root) : null
+  const run: CollectionRun =
+    previous?.status === 'interrupted'
+      ? {
+          ...previous,
+          pid: process.pid,
+          status: 'running',
+          endedAt: undefined,
+          message: '服务已恢复，继续处理未完成的内容。',
+        }
+      : {
+          id: randomUUID(),
+          pid: process.pid,
+          status: 'running',
+          startedAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+          sources: [],
+          events: [],
+        }
   addCollectionRunEvent(run, {
-    action: 'collection-started',
+    action:
+      previous?.status === 'interrupted'
+        ? 'collection-resumed'
+        : 'collection-started',
     status: 'running',
     message: '开始执行本轮信源采集',
   })

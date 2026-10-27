@@ -19,6 +19,12 @@ export function classifyNonArticlePage(value: string): string | undefined {
   if (host === 'events.ycombinator.com') {
     return '活动页：活动报名与介绍，不是文章正文'
   }
+  if (host === 'aws-experience.com' && /^\/apj\/smb\/e\//u.test(pathname)) {
+    return '活动页：工作坊报名与介绍，不是文章正文'
+  }
+  if (host === 'claude.ai' && pathname.startsWith('/artifact/')) {
+    return '互动作品：游戏或应用，不是文章正文'
+  }
   if (
     host === 'chatgpt.com' &&
     (pathname === '/plugins' || pathname.startsWith('/plugins/'))

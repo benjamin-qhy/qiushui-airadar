@@ -8,6 +8,7 @@ import {
 } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
+import { request } from 'node:http'
 
 import { expect, it } from 'vitest'
 
@@ -15,6 +16,46 @@ import { initializeSingleTableConfig } from '@qiushuiai-airadar/config'
 import { SingleTableRepository } from '@qiushuiai-airadar/runtime'
 
 import { createSingleTableServiceApp } from './single-table-service.js'
+
+it('accepts a same-origin LAN page while rejecting another site', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'airadar-lan-origin-'))
+  let service: ReturnType<typeof createSingleTableServiceApp> | undefined
+  try {
+    const configRoot = await initializeSingleTableConfig(
+      path.resolve(import.meta.dirname, '../../../config'),
+      root
+    )
+    service = createSingleTableServiceApp({ dataRoot: root, configRoot })
+    const address = await service.start({ host: '0.0.0.0', port: 0 })
+    const target = `http://127.0.0.1:${address.port}/api/collection/pause`
+    const headers = {
+      host: `192.168.3.108:${address.port}`,
+      origin: `http://192.168.3.108:${address.port}`,
+      'content-type': 'application/json',
+    }
+    const body = JSON.stringify({ scope: { level: 'global' }, values: {} })
+    const post = (origin: string) =>
+      new Promise<number>((resolve, reject) => {
+        const outgoing = request(
+          target,
+          { method: 'POST', headers: { ...headers, origin } },
+          (response) => {
+            response.resume()
+            response.on('end', () => resolve(response.statusCode ?? 0))
+          }
+        )
+        outgoing.on('error', reject)
+        outgoing.end(body)
+      })
+    expect(await post(headers.origin)).toBe(409)
+    expect(
+      await post('https://evil.example')
+    ).toBe(403)
+  } finally {
+    await service?.stop()
+    await rm(root, { recursive: true, force: true })
+  }
+})
 
 it('starts one manual translation for completed English content and rejects retry', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'airadar-manual-translate-'))
@@ -442,6 +483,139 @@ it('only reruns a failed row after an explicit manual retry request', async () =
   }
 })
 
+it('processes a waiting video from a supplied transcript without rediscovering it', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'airadar-video-transcript-'))
+  let service: ReturnType<typeof createSingleTableServiceApp> | undefined
+  try {
+    const configRoot = await initializeSingleTableConfig(
+      path.resolve(import.meta.dirname, '../../../config'),
+      root
+    )
+    const repository = await SingleTableRepository.open(root)
+    const row = await repository.recordUnavailable(
+      {
+        platform: 'x',
+        sourceType: 'x',
+        sourceAccountId: 'x_openai',
+        sourceAccountName: 'OpenAI',
+        externalContentId: 'waiting-video',
+        title: 'Waiting video',
+        kind: 'video',
+        format: 'subtitle',
+        language: 'en',
+      },
+      'Video captions provider is unavailable',
+      true
+    )
+    repository.close()
+    service = createSingleTableServiceApp({
+      dataRoot: root,
+      configRoot,
+      gateway: {
+        async complete() {
+          return {
+            text: '---\nkeywords: ["视频"]\nspam:\n  isJunk: true\n  reason: "低价值"\n---\n完整视频摘要，记录视频内容与可核对的细节。',
+            provider: 'mock',
+            model: 'mock',
+            durationMs: 1,
+          }
+        },
+      },
+    })
+    const address = await service.start({ host: '127.0.0.1', port: 0 })
+    const response = await fetch(
+      `http://${address.host}:${address.port}/api/contents/${row.id}/retry`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          transcript: 'The complete spoken content of this video is available here.',
+        }),
+      }
+    )
+    const reopened = await SingleTableRepository.open(root)
+    expect(response.status, String(reopened.getById(row.id)?.last_error ?? '')).toBe(200)
+    expect(reopened.getById(row.id)?.process_status).toBe('completed')
+    expect(await reopened.readBody(row.id, 'en')).toContain('spoken content')
+    reopened.close()
+  } finally {
+    await service?.stop()
+    await rm(root, { recursive: true })
+  }
+})
+
+it('retries model-failed rows in a persisted batch without reprocessing success', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'airadar-model-batch-'))
+  let service: ReturnType<typeof createSingleTableServiceApp> | undefined
+  try {
+    const configRoot = await initializeSingleTableConfig(
+      path.resolve(import.meta.dirname, '../../../config'),
+      root
+    )
+    const repository = await SingleTableRepository.open(root)
+    const row = await repository.saveOriginal({
+      platform: 'x',
+      sourceType: 'x',
+      sourceAccountId: 'x_openai',
+      sourceAccountName: 'OpenAI',
+      externalContentId: 'batch-test',
+      title: 'Failed post',
+      body: 'An AI agent workflow.',
+      kind: 'short_post',
+      format: 'plain_text',
+      language: 'en',
+    })
+    repository.fail(row.id, 'classify', new Error('Previous model failure'))
+    repository.close()
+    let calls = 0
+    service = createSingleTableServiceApp({
+      dataRoot: root,
+      configRoot,
+      gateway: {
+        async complete() {
+          calls++
+          return {
+            text: '---\nkeywords: ["智能体"]\nspam:\n  isJunk: true\n  reason: "低价值"\n---',
+            provider: 'mock',
+            model: 'mock',
+            durationMs: 1,
+          }
+        },
+      },
+    })
+    const { port } = await service.start({ host: '127.0.0.1', port: 0 })
+    const base = `http://127.0.0.1:${port}`
+    const started = await fetch(`${base}/api/model-retry/start`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: '{}',
+    })
+    expect(started.status).toBe(202)
+    let batch: { status: string; succeeded: number } | null = null
+    for (let attempt = 0; attempt < 50; attempt++) {
+      batch = (
+        (await fetch(`${base}/api/model-retry`).then((response) =>
+          response.json()
+        )) as { batch: { status: string; succeeded: number } | null }
+      ).batch
+      if (batch?.status === 'completed') break
+      await new Promise((resolve) => setTimeout(resolve, 10))
+    }
+    expect(batch).toMatchObject({ status: 'completed', succeeded: 1 })
+    expect(calls).toBe(1)
+    expect(
+      (
+        (await fetch(`${base}/api/model-retry/preview`).then((response) =>
+          response.json()
+        )) as { count: number }
+      ).count
+    ).toBe(0)
+  } finally {
+    await service?.stop()
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
 it('manages sources, provider credentials, connection tests, and validated YAML', async () => {
   const root = await mkdtemp(
     path.join(tmpdir(), 'qiushuiai-airadar-management-')
@@ -566,18 +740,7 @@ it('manages sources, provider credentials, connection tests, and validated YAML'
         score: { provider: 'deepseek', model: 'deepseek-v4-pro' },
       },
     })
-    expect(modelSave.status).toBe(200)
-    expect(
-      (await fetch(`${base}/api/models`).then((response) =>
-        response.json()
-      )) as {
-        stages: Record<string, { provider: string; model: string }>
-      }
-    ).toMatchObject({
-      stages: {
-        score: { provider: 'deepseek', model: 'deepseek-v4-pro' },
-      },
-    })
+    expect(modelSave.status).toBe(409)
     expect(
       (
         await mutate('/api/models', 'PUT', {
@@ -619,7 +782,8 @@ it('manages sources, provider credentials, connection tests, and validated YAML'
     ).toMatchObject({
       id: 'openai-codex',
       name: 'OpenAI Codex',
-      configured: true,
+      configured: false,
+      pending: true,
       authPath: codexAuthPath,
       usesDefaultPath: false,
     })
@@ -628,15 +792,7 @@ it('manages sources, provider credentials, connection tests, and validated YAML'
         response.json()
       )) as unknown
     ).toMatchObject({
-      availableModelGroups: [
-        expect.objectContaining({
-          providerId: 'openai-codex',
-          providerName: 'OpenAI Codex',
-          models: expect.arrayContaining([
-            expect.objectContaining({ id: 'gpt-5.5' }),
-          ]),
-        }),
-      ],
+      availableModelGroups: [],
     })
     expect(
       (await mutate('/api/model-providers/openai-codex/test', 'POST', {}))
@@ -652,6 +808,28 @@ it('manages sources, provider credentials, connection tests, and validated YAML'
         })
       ).status
     ).toBe(200)
+    expect(
+      (
+        await mutate('/api/model-providers/deepseek', 'PUT', {
+          apiKey: 'test-deepseek-key',
+        })
+      ).status
+    ).toBe(200)
+    expect(
+      (
+        await mutate('/api/model-providers/deepseek/test', 'POST', {
+          modelId: 'deepseek-v4-pro',
+        })
+      ).status
+    ).toBe(200)
+    expect(
+      (
+        await mutate('/api/models', 'PUT', {
+          defaultModel: 'gpt-5.5',
+          stages: { score: { provider: 'deepseek', model: 'deepseek-v4-pro' } },
+        })
+      ).status
+    ).toBe(200)
     const providerPayload = JSON.stringify(
       await fetch(`${base}/api/model-providers`).then((response) =>
         response.json()
@@ -659,7 +837,7 @@ it('manages sources, provider credentials, connection tests, and validated YAML'
     )
     expect(providerPayload).not.toContain('test-api-key')
     expect(providerPayload).toContain('"id":"openai"')
-    expect(providerPayload).toContain('"configured":true')
+    expect(providerPayload).toContain('"pending":true')
     if (process.platform !== 'win32')
       expect(
         (await stat(path.join(root, 'model-auth.json'))).mode & 0o077
@@ -696,6 +874,146 @@ it('manages sources, provider credentials, connection tests, and validated YAML'
     expect(
       await readFile(path.join(configRoot, 'sources.yaml'), 'utf8')
     ).not.toContain('rss_management_test')
+  } finally {
+    await service?.stop()
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+it('keeps a new API key pending until its model responds and excludes non-model failures from retry preview', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'airadar-model-validation-'))
+  let service: ReturnType<typeof createSingleTableServiceApp> | undefined
+  let connected = false
+  try {
+    const configRoot = await initializeSingleTableConfig(
+      path.resolve(import.meta.dirname, '../../../config'),
+      root
+    )
+    const repository = await SingleTableRepository.open(root)
+    const baseRow = {
+      platform: 'x',
+      sourceType: 'x',
+      sourceAccountId: 'test',
+      sourceAccountName: 'Test',
+      title: 'Test',
+      kind: 'short_post' as const,
+      format: 'plain_text' as const,
+      language: 'zh' as const,
+    }
+    await repository.recordUnavailable(
+      { ...baseRow, externalContentId: 'model-error' },
+      'HTTP 401 invalid API key'
+    )
+    await repository.recordUnavailable(
+      { ...baseRow, externalContentId: 'caption-error' },
+      '字幕服务不可用'
+    )
+    repository.close()
+    service = createSingleTableServiceApp({
+      dataRoot: root,
+      configRoot,
+      promptsRoot: 'unused',
+      modelConnectionTest: async () => {
+        if (!connected) throw new Error('unauthorized')
+        return { status: 'succeeded', message: 'OK' }
+      },
+    })
+    const { port } = await service.start({ host: '127.0.0.1', port: 0 })
+    const base = `http://127.0.0.1:${port}`
+    const postJson = (url: string, method: string, body: object) =>
+      fetch(`${base}${url}`, {
+        method,
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(body),
+      })
+    expect(
+      (
+        await postJson('/api/model-providers/deepseek', 'PUT', {
+          apiKey: 'invalid-key',
+        })
+      ).status
+    ).toBe(200)
+    expect(
+      (
+        await postJson('/api/model-providers/deepseek/test', 'POST', {
+          modelId: 'deepseek-v4-pro',
+        })
+      ).status
+    ).toBe(400)
+    const providersBefore = (await fetch(`${base}/api/model-providers`).then(
+      (response) => response.json()
+    )) as {
+      items: Array<{ id: string; configured: boolean; pending: boolean }>
+    }
+    expect(
+      providersBefore.items.find((item) => item.id === 'deepseek')
+    ).toMatchObject({ configured: false, pending: true })
+    connected = true
+    expect(
+      (
+        await postJson('/api/model-providers/deepseek/test', 'POST', {
+          modelId: 'deepseek-v4-pro',
+        })
+      ).status
+    ).toBe(200)
+    const providersAfter = (await fetch(`${base}/api/model-providers`).then(
+      (response) => response.json()
+    )) as {
+      items: Array<{
+        id: string
+        configured: boolean
+        pending: boolean
+        verified: boolean
+      }>
+    }
+    expect(
+      providersAfter.items.find((item) => item.id === 'deepseek')
+    ).toMatchObject({ configured: true, pending: false, verified: true })
+    connected = false
+    expect(
+      (
+        await postJson('/api/model-providers/deepseek', 'PUT', {
+          apiKey: 'replacement-that-fails',
+        })
+      ).status
+    ).toBe(200)
+    expect(
+      (
+        await postJson('/api/model-providers/deepseek/test', 'POST', {
+          modelId: 'deepseek-v4-pro',
+        })
+      ).status
+    ).toBe(400)
+    const activeCredentials = await readFile(
+      path.join(root, 'model-auth.json'),
+      'utf8'
+    )
+    expect(activeCredentials).toContain('invalid-key')
+    expect(activeCredentials).not.toContain('replacement-that-fails')
+    const preview = (await fetch(`${base}/api/model-retry/preview`).then(
+      (response) => response.json()
+    )) as { count: number }
+    expect(preview.count).toBe(1)
+    await writeFile(
+      path.join(root, 'model-retry-batch.json'),
+      JSON.stringify({
+        id: 'previous-batch',
+        status: 'running',
+        ids: ['one', 'two'],
+        cursor: 1,
+        succeeded: 1,
+        failed: 0,
+      })
+    )
+    const recoveredBatch = (await fetch(`${base}/api/model-retry`).then(
+      (response) => response.json()
+    )) as { batch: { status: string; cursor: number } }
+    expect(recoveredBatch.batch).toMatchObject({ status: 'paused', cursor: 1 })
+    const start = await postJson('/api/collection/start', 'POST', {})
+    expect(start.status).toBe(409)
+    expect(await start.json()).toMatchObject({
+      error: 'model_preflight_failed',
+    })
   } finally {
     await service?.stop()
     await rm(root, { recursive: true, force: true })

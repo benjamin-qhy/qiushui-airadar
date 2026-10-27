@@ -12,6 +12,7 @@ import {
   runtimeConfigSchema,
   providersConfigSchema,
   saveAnalysisModelConfig,
+  saveAnalysisTranscriptionConfig,
   saveEditableConfigFile,
   saveSourceState,
   sourcesConfigSchema,
@@ -79,11 +80,27 @@ it('loads all YAML configuration and preserves source order', async () => {
     new_information: 10,
   })
   expect(config.analysis.translation.minimum_total_score).toBe(10)
+  expect(config.analysis.transcription.auto).toBe(false)
   expect(config.analysis.model).toEqual({
     provider: 'codex',
     default: 'gpt-5.5',
     stages: {},
   })
+})
+
+it('keeps audio transcription off by default and preserves model settings when toggled', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'airadar-transcription-'))
+  roots.push(root)
+  const configRoot = await initializeSingleTableConfig(
+    path.resolve(import.meta.dirname, '../../../config'),
+    root
+  )
+  expect((await loadSingleTableConfig(configRoot)).analysis.transcription.auto).toBe(false)
+  const originalModel = (await loadSingleTableConfig(configRoot)).analysis.model
+  await saveAnalysisTranscriptionConfig(configRoot, true)
+  const updated = await loadSingleTableConfig(configRoot)
+  expect(updated.analysis.transcription.auto).toBe(true)
+  expect(updated.analysis.model).toEqual(originalModel)
 })
 
 it('normalizes legacy preferred providers into ordered capability routes', () => {

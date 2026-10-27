@@ -62,6 +62,9 @@ export type AnalysisModelConfig = z.output<typeof analysisModelConfigSchema>
 
 export const analysisConfigSchema = z.object({
   model: analysisModelConfigSchema,
+  transcription: z
+    .object({ auto: z.boolean().default(false) })
+    .default({ auto: false }),
   prompts: z.object({
     classify: z.number().int().positive(),
     score: z.number().int().positive(),
@@ -363,6 +366,21 @@ export async function saveAnalysisModelConfig(
     configRoot,
     'analysis.yaml',
     stringifyYaml({ ...current, model: analysisModelConfigSchema.parse(model) })
+  )
+}
+
+export async function saveAnalysisTranscriptionConfig(
+  configRoot: string,
+  auto: boolean
+): Promise<void> {
+  const current = await parseFile(
+    path.join(configRoot, 'analysis.yaml'),
+    analysisConfigSchema
+  )
+  await saveEditableConfigFile(
+    configRoot,
+    'analysis.yaml',
+    stringifyYaml({ ...current, transcription: { auto } })
   )
 }
 

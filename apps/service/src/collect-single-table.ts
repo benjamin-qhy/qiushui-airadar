@@ -14,17 +14,25 @@ import {
 } from '@qiushuiai-airadar/pipeline'
 import { SingleTableRepository } from '@qiushuiai-airadar/runtime'
 import { createSingleTableSourceProvider } from './single-table-provider.js'
+import {
+  checkXVideoTranscription,
+  transcribeXVideo,
+} from './x-video-transcriber.js'
 import { addCollectionRunEvent, beginCollectionRun } from './collection-run.js'
 
 export interface CollectionControl {
+  modelFailureMessage?: string
   bind(onPausedChange: (paused: boolean) => Promise<void>): void
   pause(): Promise<void>
+  pauseForModelFailure(message: string): Promise<void>
+  interrupt(): void
   resume(): Promise<void>
   waitUntilRunnable(): Promise<void>
 }
 
 export function createCollectionControl(): CollectionControl {
   let paused = false
+  let interrupted = false
   let onPausedChange: ((paused: boolean) => Promise<void>) | undefined
   let resumeWaiter: (() => void) | undefined
   return {
@@ -36,18 +44,31 @@ export function createCollectionControl(): CollectionControl {
       paused = true
       await onPausedChange?.(true)
     },
+    async pauseForModelFailure(message) {
+      this.modelFailureMessage = message
+      paused = true
+      await onPausedChange?.(true)
+    },
+    interrupt() {
+      interrupted = true
+      paused = false
+      resumeWaiter?.()
+      resumeWaiter = undefined
+    },
     async resume() {
       if (!paused) return
       paused = false
+      this.modelFailureMessage = undefined
       await onPausedChange?.(false)
       resumeWaiter?.()
       resumeWaiter = undefined
     },
     async waitUntilRunnable() {
-      if (!paused) return
-      await new Promise<void>((resolve) => {
-        resumeWaiter = resolve
-      })
+      if (paused)
+        await new Promise<void>((resolve) => {
+          resumeWaiter = resolve
+        })
+      if (interrupted) throw new Error('COLLECTION_INTERRUPTED')
     },
   }
 }
@@ -62,13 +83,15 @@ export async function collectSingleTable(options: {
   provider?: import('@qiushuiai-airadar/pipeline').SingleTableSourceProvider
   onStarted?: () => void
   control?: CollectionControl
+  resume?: boolean
 }) {
-  const tracker = await beginCollectionRun(options.dataRoot)
+  const tracker = await beginCollectionRun(options.dataRoot, options.resume)
   try {
     options.control?.bind(async (paused) => {
       tracker.run.status = paused ? 'paused' : 'running'
       tracker.run.message = paused
-        ? '采集已暂停，恢复后将从当前位置继续。'
+        ? (options.control?.modelFailureMessage ??
+          '采集已暂停，恢复后将从当前位置继续。')
         : '采集已恢复，正在从暂停位置继续。'
       addCollectionRunEvent(tracker.run, {
         action: paused ? 'collection-paused' : 'collection-resumed',
@@ -90,12 +113,16 @@ export async function collectSingleTable(options: {
     await tracker.save()
     return results
   } catch (error) {
-    tracker.run.status = 'failed'
+    const interrupted =
+      error instanceof Error && error.message === 'COLLECTION_INTERRUPTED'
+    tracker.run.status = interrupted ? 'interrupted' : 'failed'
     tracker.run.endedAt = new Date().toISOString()
-    tracker.run.message = '采集任务异常退出，请检查信源和模型配置后重新执行。'
+    tracker.run.message = interrupted
+      ? '服务已停止，本轮进度已保存。重新启动后点击“继续上轮采集”。'
+      : '采集任务异常退出，请检查信源和模型配置后重新执行。'
     addCollectionRunEvent(tracker.run, {
-      action: 'collection-failed',
-      status: 'failed',
+      action: interrupted ? 'collection-interrupted' : 'collection-failed',
+      status: interrupted ? 'paused' : 'failed',
       message: tracker.run.message,
     })
     await tracker.save()
@@ -115,6 +142,8 @@ async function executeCollection(
     dataRoot
   )
   const config = await loadSingleTableConfig(configRoot)
+  if (config.analysis.transcription.auto)
+    await checkXVideoTranscription(options.dataRoot)
   const sourceState = await loadSourceState(configRoot)
   const secretReader = createFileSecretReader(
     options.secretFile ?? path.join(dataRoot, '.env')
@@ -132,13 +161,67 @@ async function executeCollection(
   ])
   const credentialFile = path.join(dataRoot, 'model-auth.json')
   const credentialStore = createFileModelCredentialStore(credentialFile)
-  const gateway =
+  let baseGateway =
     options.gateway ??
     createSingleTableModelGateway(
       credentialStore,
       config.analysis.model.provider,
       config.analysis.model
     )
+  let consecutiveModelFailures = 0
+  const gateway: typeof baseGateway = options.control
+    ? {
+        getCapacity: baseGateway.getCapacity?.bind(baseGateway),
+        async complete(input) {
+          for (let attempt = 0; ; attempt++) {
+            try {
+              const result = await baseGateway.complete(input)
+              consecutiveModelFailures = 0
+              return result
+            } catch (error) {
+              const message =
+                error instanceof Error ? error.message : String(error)
+              const permanent =
+                /\b(?:401|402|403)\b|unauthori[sz]ed|invalid.api.key|insufficient|余额不足|额度不足|permission|forbidden/iu.test(
+                  message
+                )
+              consecutiveModelFailures++
+              if (!permanent && attempt < 2) continue
+              if (!permanent && consecutiveModelFailures < 3) throw error
+              const route = baseGateway.getCapacity?.(input.stage)
+              const cause = /\b401\b|unauthori[sz]ed|invalid.api.key/iu.test(
+                message
+              )
+                ? '认证失败'
+                : /\b402\b|insufficient|余额不足|额度不足/iu.test(message)
+                  ? '额度不足'
+                  : /\b403\b|permission|forbidden/iu.test(message)
+                    ? '权限不足'
+                    : '超时或网络错误'
+              const stageName = {
+                classify: '内容判定与摘要',
+                score: '价值评分',
+                translate: '英文翻译',
+              }[input.stage]
+              await options.control!.pauseForModelFailure(
+                `模型调用失败，采集已暂停。原因：${cause}；环节：${stageName}；模型：${route?.provider ?? '未知'} / ${route?.model ?? '未知'}。请检查模型配置，测试成功后点击“恢复采集”。`
+              )
+              await options.control!.waitUntilRunnable()
+              if (!options.gateway) {
+                const latest = await loadSingleTableConfig(configRoot)
+                baseGateway = createSingleTableModelGateway(
+                  credentialStore,
+                  latest.analysis.model.provider,
+                  latest.analysis.model
+                )
+              }
+              consecutiveModelFailures = 0
+              attempt = -1
+            }
+          }
+        },
+      }
+    : baseGateway
   const provider =
     options.provider ??
     createSingleTableSourceProvider({
@@ -146,6 +229,9 @@ async function executeCollection(
       twitterApiKey,
       youtubeApiKey,
       providerRoutes: config.providers.routes,
+      xVideoTranscriber: config.analysis.transcription.auto
+        ? (url) => transcribeXVideo(options.dataRoot, url)
+        : undefined,
     })
   const sources = config.sources.sources.map((source) => ({
     ...source,
@@ -159,6 +245,8 @@ async function executeCollection(
       status: 'pending',
       discovered: 0,
       completed: 0,
+      newlyCompleted: 0,
+      existingCompleted: 0,
       failed: 0,
       skipped: 0,
     }))
@@ -167,6 +255,9 @@ async function executeCollection(
     options.repository ?? (await SingleTableRepository.open(dataRoot))
   try {
     const results = await collectSourcesSerially({
+      resumeIncomplete: options.resume,
+      resumeStartedAt: tracker.run.startedAt,
+      runStartedAt: tracker.run.startedAt,
       repository,
       provider,
       gateway,
@@ -174,12 +265,13 @@ async function executeCollection(
       waitUntilRunnable: options.control
         ? () => options.control!.waitUntilRunnable()
         : undefined,
-      async onProgress(source, result, finished) {
+      async onProgress(source, result, finished, breakdown) {
         const entry = tracker.run.sources.find(
           (row) => row.sourceId === source.id
         )!
         const wasPending = entry.status === 'pending'
         Object.assign(entry, result, {
+          ...breakdown,
           status: finished ? 'completed' : 'running',
         })
         if (wasPending)

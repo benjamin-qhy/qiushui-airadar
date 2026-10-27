@@ -2,6 +2,8 @@ model:
   provider: codex
   default: gpt-5.5
   stages: {}
+transcription:
+  auto: false
 prompts:
   classify: 5
   score: 3

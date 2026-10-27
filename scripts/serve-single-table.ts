@@ -40,6 +40,10 @@ const service = createSingleTableServiceApp({
   dataRoot,
   configRoot,
   secretFile: process.env.QIUSHUIAI_AIRADAR_V2_SECRET_FILE,
+  promptsRoot: path.resolve(
+    import.meta.dirname,
+    '../docs/prompts/single-table-content'
+  ),
 })
 const address = await service.start({ host: '127.0.0.1', port })
 process.stdout.write(
