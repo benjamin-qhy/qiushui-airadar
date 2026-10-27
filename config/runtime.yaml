@@ -1,6 +1,6 @@
 timezone: Asia/Shanghai
 collection:
-  schedule: '0 8 * * *'
+  schedule: '0 4 * * *'
   list_pages: 1
   max_retries: 2
   serial_sources: true

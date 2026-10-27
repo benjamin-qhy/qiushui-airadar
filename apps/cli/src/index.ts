@@ -179,6 +179,7 @@ export async function runCli(
         path.join(dataRoot, '.env'),
       promptsRoot: path.join(packageRoot, 'prompts'),
       webRoot: fileURLToPath(new URL('../web', import.meta.url)),
+      scheduleCollections: true,
     }).start({ host, port })
     writeJson(dependencies.stdout, {
       service: 'qiushui-airadar',

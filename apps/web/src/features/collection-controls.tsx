@@ -24,7 +24,13 @@ export interface CollectionRun {
 
 export interface CollectionData {
   collection?: CollectionRun | null
-  schedule?: { expression: string; active: boolean }
+  schedule?: {
+    expression: string
+    timezone?: string
+    active: boolean
+    error?: string
+    lastAttempt?: { at: string; status: string; message?: string }
+  }
   total?: number
   failed?: number
   waiting?: number
