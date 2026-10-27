@@ -8,6 +8,7 @@ import {
 } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
+import { request } from 'node:http'
 
 import { expect, it } from 'vitest'
 
@@ -15,6 +16,46 @@ import { initializeSingleTableConfig } from '@qiushuiai-airadar/config'
 import { SingleTableRepository } from '@qiushuiai-airadar/runtime'
 
 import { createSingleTableServiceApp } from './single-table-service.js'
+
+it('accepts a same-origin LAN page while rejecting another site', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'airadar-lan-origin-'))
+  let service: ReturnType<typeof createSingleTableServiceApp> | undefined
+  try {
+    const configRoot = await initializeSingleTableConfig(
+      path.resolve(import.meta.dirname, '../../../config'),
+      root
+    )
+    service = createSingleTableServiceApp({ dataRoot: root, configRoot })
+    const address = await service.start({ host: '0.0.0.0', port: 0 })
+    const target = `http://127.0.0.1:${address.port}/api/collection/pause`
+    const headers = {
+      host: `192.168.3.108:${address.port}`,
+      origin: `http://192.168.3.108:${address.port}`,
+      'content-type': 'application/json',
+    }
+    const body = JSON.stringify({ scope: { level: 'global' }, values: {} })
+    const post = (origin: string) =>
+      new Promise<number>((resolve, reject) => {
+        const outgoing = request(
+          target,
+          { method: 'POST', headers: { ...headers, origin } },
+          (response) => {
+            response.resume()
+            response.on('end', () => resolve(response.statusCode ?? 0))
+          }
+        )
+        outgoing.on('error', reject)
+        outgoing.end(body)
+      })
+    expect(await post(headers.origin)).toBe(409)
+    expect(
+      await post('https://evil.example')
+    ).toBe(403)
+  } finally {
+    await service?.stop()
+    await rm(root, { recursive: true, force: true })
+  }
+})
 
 it('starts one manual translation for completed English content and rejects retry', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'airadar-manual-translate-'))

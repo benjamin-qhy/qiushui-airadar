@@ -446,10 +446,15 @@ function send(
   response.end(JSON.stringify(body))
 }
 
-function localOrigin(origin: string | undefined): boolean {
+function localOrigin(origin: string | undefined, host: string | undefined): boolean {
   if (!origin) return true
   try {
-    return ['127.0.0.1', '::1', 'localhost'].includes(new URL(origin).hostname)
+    const parsed = new URL(origin)
+    return (
+      ['http:', 'https:'].includes(parsed.protocol) &&
+      (['127.0.0.1', '::1', 'localhost'].includes(parsed.hostname) ||
+        parsed.host === host)
+    )
   } catch {
     return false
   }
@@ -645,8 +650,8 @@ export function createSingleTableServiceApp(options: {
   return {
     async start(address: { host: string; port: number }) {
       if (server) throw new Error('Service is already running')
-      if (!['127.0.0.1', '::1'].includes(address.host))
-        throw new Error('Single-table service only binds locally')
+      if (!['127.0.0.1', '::1', '0.0.0.0'].includes(address.host))
+        throw new Error('Unsupported service host')
       repository = await SingleTableRepository.open(options.dataRoot)
       const activeRepository = repository
       const executeBatch = (batch: RetryBatch) => {
@@ -723,7 +728,7 @@ export function createSingleTableServiceApp(options: {
             method === 'POST' &&
             url.pathname.startsWith('/api/model-retry/')
           ) {
-            if (!localOrigin(request.headers.origin))
+            if (!localOrigin(request.headers.origin, request.headers.host))
               return send(response, 403, { error: 'origin_not_allowed' })
             if (
               !request.headers['content-type']?.startsWith('application/json')
@@ -997,7 +1002,7 @@ export function createSingleTableServiceApp(options: {
           ) {
             const restarting = url.pathname.endsWith('/resume')
             const origin = request.headers.origin
-            if (!localOrigin(origin))
+            if (!localOrigin(origin, request.headers.host))
               return send(response, 403, {
                 message: '只能从本机页面启动采集。',
               })
@@ -1072,7 +1077,7 @@ export function createSingleTableServiceApp(options: {
               url.pathname === '/api/collection/resume')
           ) {
             const origin = request.headers.origin
-            if (!localOrigin(origin))
+            if (!localOrigin(origin, request.headers.host))
               return send(response, 403, {
                 message: '只能从本机页面控制采集。',
               })
@@ -1143,8 +1148,7 @@ export function createSingleTableServiceApp(options: {
           if (['POST', 'PUT', 'DELETE'].includes(method)) {
             const origin = request.headers.origin
             if (
-              origin &&
-              !/^https?:\/\/(?:localhost|127\.0\.0\.1)(?::\d+)?$/u.test(origin)
+              !localOrigin(origin, request.headers.host)
             )
               return send(response, 403, { error: 'origin_not_allowed' })
             if (

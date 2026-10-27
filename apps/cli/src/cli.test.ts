@@ -23,11 +23,11 @@ function outputBuffer() {
 }
 
 describe('qiushuiai-airadar CLI', () => {
-  it('rejects invalid ports and non-loopback installation hosts', async () => {
+  it('rejects invalid ports and unsupported installation hosts', async () => {
     for (const args of [
       ['service', 'run', '--port', '123junk'],
       ['service', 'run', '--port'],
-      ['service', 'install', '--host', '0.0.0.0'],
+      ['service', 'install', '--host', '192.168.3.108'],
     ]) {
       await expect(runCli(args, { stdout: outputBuffer() })).rejects.toThrow(
         'valid --host and --port'
@@ -133,6 +133,22 @@ describe('qiushuiai-airadar CLI', () => {
       service: 'qiushuiai-airadar',
       status: 'installed',
     })
+  })
+
+  it('allows installing a service on all IPv4 interfaces', async () => {
+    const calls: string[] = []
+    expect(
+      await runCli(['service', 'install', '--host', '0.0.0.0'], {
+        stdout: outputBuffer(),
+        serviceManager: {
+          async execute(command, options) {
+            calls.push(`${command}:${options.host}:${options.port}`)
+            return { status: 'installed' }
+          },
+        },
+      })
+    ).toBe(0)
+    expect(calls).toEqual(['install:0.0.0.0:43120'])
   })
 
   it('keeps service run as the foreground entry used by service wrappers', async () => {
