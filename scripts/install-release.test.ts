@@ -102,7 +102,7 @@ describe.skipIf(process.platform === 'win32' || !existsSync('/bin/zsh'))(
         await chmod(join(mockBin, 'curl'), 0o755)
         await writeFile(join(mockBin, 'uname'), '#!/bin/sh\necho Linux\n')
         await chmod(join(mockBin, 'uname'), 0o755)
-        await execute('/bin/sh', [installer], {
+        const installed = await execute('/bin/sh', [installer], {
           env: {
             ...process.env,
             HOME: home,
@@ -111,6 +111,10 @@ describe.skipIf(process.platform === 'win32' || !existsSync('/bin/zsh'))(
             AIRADAR_INSTALL_FIXTURES: fixtures,
           },
         })
+        assert.ok(!installed.stderr.includes('unbound variable'))
+        assert.ok(
+          installed.stdout.includes(`${home}/.zshrc（重新打开终端后生效）`)
+        )
         assert.ok(!existsSync(previous))
         assert.ok(existsSync(join(home, 'old-service-stopped')))
         assert.equal(

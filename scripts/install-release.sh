@@ -250,7 +250,7 @@ curl --noproxy '*' --retry 10 --retry-connrefused --retry-delay 1 -fsS \
   "http://127.0.0.1:$port/health" >/dev/null
 shell_config="$(configure_shell_path)"
 echo "qiushui-airadar $version 已安装并运行：http://127.0.0.1:$port"
-echo "命令环境已自动配置：$shell_config（重新打开终端后生效）"
+echo "命令环境已自动配置：${shell_config}（重新打开终端后生效）"
 if [ "$(uname -s)" = "Darwin" ] && [ "${QIUSHUI_AIRADAR_OPEN_BROWSER:-1}" = "1" ]; then
   open "http://127.0.0.1:$port" >/dev/null 2>&1 || true
 fi
