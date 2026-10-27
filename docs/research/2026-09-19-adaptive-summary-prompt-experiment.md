@@ -19,7 +19,7 @@
 4. [Chain of Density 论文](https://aclanthology.org/2023.newsum-1.7/)指出，摘要存在信息量和可读性的权衡；有效方法是从稀疏摘要开始，把遗漏的重要实体融合进去，同时避免篇幅不断增长。
 5. [FactCC](https://aclanthology.org/2020.emnlp-main.750/)和 [LongDocFACTScore](https://aclanthology.org/2024.lrec-main.941/)都说明，摘要评价不能只看文字重合或长度，还要检查每项陈述是否能由原文支持，长文尤其需要逐项关注事实一致性。
 
-因此，适合 qiushuiai-airadar 的自适应摘要不应采用固定字数，而应同时满足：
+因此，适合 qiushui-airadar 的自适应摘要不应采用固定字数，而应同时满足：
 
 - 有明确的核心结论；
 - 支撑信息按重要性筛选；

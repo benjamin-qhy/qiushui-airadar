@@ -19,15 +19,15 @@ import {
   providerRoutesSchema,
   updateFileSecret,
   type SingleTableConfig,
-} from '@qiushuiai-airadar/config'
+} from '@qiushui-airadar/config'
 import {
   SingleTableRepository,
   type ContentRow,
-} from '@qiushuiai-airadar/runtime'
+} from '@qiushui-airadar/runtime'
 import {
   classifyNonArticlePage,
   normalizeYouTubeIdentity,
-} from '@qiushuiai-airadar/source-adapters'
+} from '@qiushui-airadar/source-adapters'
 import {
   createReadOnlyCodexCredentialStore,
   createFileModelCredentialStore,
@@ -39,7 +39,7 @@ import {
   processSingleTableContent,
   translateSingleTableContent,
   type SingleTableModelGateway,
-} from '@qiushuiai-airadar/pipeline'
+} from '@qiushui-airadar/pipeline'
 import { createSingleTableSourceProvider } from './single-table-provider.js'
 import {
   checkXVideoTranscription,
@@ -446,7 +446,10 @@ function send(
   response.end(JSON.stringify(body))
 }
 
-function localOrigin(origin: string | undefined, host: string | undefined): boolean {
+function localOrigin(
+  origin: string | undefined,
+  host: string | undefined
+): boolean {
   if (!origin) return true
   try {
     const parsed = new URL(origin)
@@ -472,7 +475,7 @@ export function createSingleTableServiceApp(options: {
     modelId: string
   ) => Promise<{ status: 'succeeded'; message: string }>
   providerFetch?: typeof fetch
-  collectionProvider?: import('@qiushuiai-airadar/pipeline').SingleTableSourceProvider
+  collectionProvider?: import('@qiushui-airadar/pipeline').SingleTableSourceProvider
 }) {
   let repository: SingleTableRepository | undefined
   let server: Server | undefined
@@ -816,7 +819,7 @@ export function createSingleTableServiceApp(options: {
             return send(response, 200, logins.get(loginStatus[1]!))
           if (method === 'GET' && url.pathname === '/health')
             return send(response, 200, {
-              service: 'qiushuiai-airadar-single-table',
+              service: 'qiushui-airadar-single-table',
               status: 'ready',
             })
           if (method === 'GET' && url.pathname === '/api/runtime/logs') {
@@ -1147,9 +1150,7 @@ export function createSingleTableServiceApp(options: {
           }
           if (['POST', 'PUT', 'DELETE'].includes(method)) {
             const origin = request.headers.origin
-            if (
-              !localOrigin(origin, request.headers.host)
-            )
+            if (!localOrigin(origin, request.headers.host))
               return send(response, 403, { error: 'origin_not_allowed' })
             if (
               !request.headers['content-type']?.startsWith('application/json')
@@ -1821,7 +1822,7 @@ export function createSingleTableServiceApp(options: {
                   config.analysis.model.provider,
                   config.analysis.model
                 )
-              const original: import('@qiushuiai-airadar/runtime').OriginalContent =
+              const original: import('@qiushui-airadar/runtime').OriginalContent =
                 {
                   platform: String(row.source_platform),
                   sourceType: String(row.source_type),
@@ -1835,7 +1836,7 @@ export function createSingleTableServiceApp(options: {
                   body,
                   kind: row.content_kind,
                   format:
-                    row.original_format as import('@qiushuiai-airadar/runtime').OriginalContent['format'],
+                    row.original_format as import('@qiushui-airadar/runtime').OriginalContent['format'],
                   language: 'en',
                   videoDurationSeconds:
                     typeof row.video_duration_seconds === 'number'
@@ -1963,8 +1964,8 @@ export function createSingleTableServiceApp(options: {
                   id,
                   row.original_language === 'zh' ? 'zh' : 'en'
                 )
-                let original: import('@qiushuiai-airadar/runtime').OriginalContent
-                let capturedCalls: import('@qiushuiai-airadar/runtime').LogEvent[] =
+                let original: import('@qiushui-airadar/runtime').OriginalContent
+                let capturedCalls: import('@qiushui-airadar/runtime').LogEvent[] =
                   []
                 const suppliedTranscript =
                   typeof retryInput.transcript === 'string'
@@ -2046,7 +2047,7 @@ export function createSingleTableServiceApp(options: {
                     body: originalBody,
                     kind: row.content_kind,
                     format:
-                      row.original_format as import('@qiushuiai-airadar/runtime').OriginalContent['format'],
+                      row.original_format as import('@qiushui-airadar/runtime').OriginalContent['format'],
                     language: row.original_language === 'zh' ? 'zh' : 'en',
                     videoDurationSeconds:
                       typeof row.video_duration_seconds === 'number'

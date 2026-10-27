@@ -8,16 +8,16 @@ import {
 import { createSingleTableServiceApp } from '../apps/service/src/single-table-service.js'
 
 const dataRootValue =
-  process.env.QIUSHUIAI_AIRADAR_V2_DATA_ROOT ??
-  path.join(homedir(), '.qiushuiai-airadar', 'development-data')
+  process.env.QIUSHUI_AIRADAR_V2_DATA_ROOT ??
+  path.join(homedir(), '.qiushui-airadar', 'development-data')
 if (!dataRootValue || !path.isAbsolute(dataRootValue))
   throw new Error(
-    'QIUSHUIAI_AIRADAR_V2_DATA_ROOT must be an absolute path to the new data directory'
+    'QIUSHUI_AIRADAR_V2_DATA_ROOT must be an absolute path to the new data directory'
   )
 const dataRoot = path.resolve(dataRootValue)
 const legacyRoot = path.resolve(
-  process.env.QIUSHUIAI_AIRADAR_DATA_ROOT ??
-    path.join(homedir(), '.qiushuiai-airadar', 'data')
+  process.env.QIUSHUI_AIRADAR_DATA_ROOT ??
+    path.join(homedir(), '.qiushui-airadar', 'data')
 )
 if (
   dataRoot === legacyRoot ||
@@ -31,7 +31,7 @@ const configRoot = await initializeSingleTableConfig(
   dataRoot
 )
 await loadSingleTableConfig(configRoot)
-const port = Number(process.env.QIUSHUIAI_AIRADAR_DEV_PORT ?? 43111)
+const port = Number(process.env.QIUSHUI_AIRADAR_DEV_PORT ?? 43111)
 if (!Number.isInteger(port) || port < 1 || port > 65535 || port === 43120)
   throw new Error(
     'Invalid development port (43120 is reserved for installation)'
@@ -39,7 +39,7 @@ if (!Number.isInteger(port) || port < 1 || port > 65535 || port === 43120)
 const service = createSingleTableServiceApp({
   dataRoot,
   configRoot,
-  secretFile: process.env.QIUSHUIAI_AIRADAR_V2_SECRET_FILE,
+  secretFile: process.env.QIUSHUI_AIRADAR_V2_SECRET_FILE,
   promptsRoot: path.resolve(
     import.meta.dirname,
     '../docs/prompts/single-table-content'

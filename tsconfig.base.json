@@ -9,12 +9,12 @@
     "noUncheckedIndexedAccess": true,
     "outDir": "dist",
     "paths": {
-      "@qiushuiai-airadar/config": ["./packages/config/src/index.ts"],
-      "@qiushuiai-airadar/domain": ["./packages/domain/src/index.ts"],
-      "@qiushuiai-airadar/runtime": ["./packages/runtime/src/index.ts"],
-      "@qiushuiai-airadar/pipeline": ["./packages/pipeline/src/index.ts"],
-      "@qiushuiai-airadar/service": ["./apps/service/src/index.ts"],
-      "@qiushuiai-airadar/source-adapters": [
+      "@qiushui-airadar/config": ["./packages/config/src/index.ts"],
+      "@qiushui-airadar/domain": ["./packages/domain/src/index.ts"],
+      "@qiushui-airadar/runtime": ["./packages/runtime/src/index.ts"],
+      "@qiushui-airadar/pipeline": ["./packages/pipeline/src/index.ts"],
+      "@qiushui-airadar/service": ["./apps/service/src/index.ts"],
+      "@qiushui-airadar/source-adapters": [
         "./packages/source-adapters/src/index.ts"
       ]
     },

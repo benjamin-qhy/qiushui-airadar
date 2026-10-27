@@ -22,7 +22,7 @@ const until = new Date(
   new Date(`${date}T00:00:00+08:00`).getTime() + 86_400_000
 ).toISOString()
 const database = new DatabaseSync(
-  path.join(dataRoot, 'qiushuiai-airadar.sqlite'),
+  path.join(dataRoot, 'qiushui-airadar.sqlite'),
   {
     readOnly: true,
   }

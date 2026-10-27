@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto'
 import {
   appendFile,
+  access,
   mkdir,
   readFile,
   rename,
@@ -12,7 +13,7 @@ import { DatabaseSync } from 'node:sqlite'
 
 import { parse as parseYaml, stringify as stringifyYaml } from 'yaml'
 
-import { canonicalizeContentUrl } from '@qiushuiai-airadar/domain'
+import { canonicalizeContentUrl } from '@qiushui-airadar/domain'
 
 export type Recommendation = 'core' | 'explore' | 'none'
 export type ScoreDimension =
@@ -408,8 +409,20 @@ export class SingleTableRepository {
 
   static async open(dataRoot: string): Promise<SingleTableRepository> {
     await mkdir(dataRoot, { recursive: true })
-    const database = new DatabaseSync(
+    const legacyExists = await access(
       path.join(dataRoot, 'qiushuiai-airadar.sqlite')
+    )
+      .then(() => true)
+      .catch((error: NodeJS.ErrnoException) => {
+        if (error.code === 'ENOENT') return false
+        throw error
+      })
+    if (legacyExists)
+      throw new Error(
+        'Legacy database found; run install-release.sh to migrate before starting qiushui-airadar'
+      )
+    const database = new DatabaseSync(
+      path.join(dataRoot, 'qiushui-airadar.sqlite')
     )
     try {
       const tables = database

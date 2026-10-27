@@ -7,14 +7,14 @@ import {
 import { SingleTableRepository } from '../packages/runtime/src/index.js'
 import { createSingleTableSourceProvider } from '../apps/service/src/single-table-provider.js'
 
-const dataRootValue = process.env.QIUSHUIAI_AIRADAR_V2_DATA_ROOT
+const dataRootValue = process.env.QIUSHUI_AIRADAR_V2_DATA_ROOT
 if (!dataRootValue || !path.isAbsolute(dataRootValue))
-  throw new Error('QIUSHUIAI_AIRADAR_V2_DATA_ROOT must be an absolute path')
+  throw new Error('QIUSHUI_AIRADAR_V2_DATA_ROOT must be an absolute path')
 
 const dataRoot = path.resolve(dataRootValue)
 const config = await loadSingleTableConfig(path.join(dataRoot, 'config'))
 const reader = createFileSecretReader(
-  process.env.QIUSHUIAI_AIRADAR_V2_SECRET_FILE ?? path.join(dataRoot, '.env')
+  process.env.QIUSHUI_AIRADAR_V2_SECRET_FILE ?? path.join(dataRoot, '.env')
 )
 async function credential(name: string): Promise<string | undefined> {
   try {

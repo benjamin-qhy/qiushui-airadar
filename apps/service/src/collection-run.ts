@@ -8,7 +8,7 @@ import {
 } from 'node:fs/promises'
 import path from 'node:path'
 import { randomUUID } from 'node:crypto'
-import type { SourceRunResult } from '@qiushuiai-airadar/pipeline'
+import type { SourceRunResult } from '@qiushui-airadar/pipeline'
 
 export interface CollectionRun {
   id: string
@@ -136,7 +136,23 @@ export async function beginCollectionRun(root: string, resume = false) {
       run.updatedAt = new Date().toISOString()
       const temporary = `${file(root)}.${run.id}.tmp`
       await writeFile(temporary, JSON.stringify(run), 'utf8')
-      await rename(temporary, file(root))
+      for (let attempt = 0; ; attempt++) {
+        try {
+          await rename(temporary, file(root))
+          break
+        } catch (error) {
+          const code = (error as NodeJS.ErrnoException).code ?? ''
+          if (
+            process.platform !== 'win32' ||
+            !['EPERM', 'EACCES', 'EBUSY'].includes(code) ||
+            attempt >= 5
+          )
+            throw error
+          await new Promise((resolve) =>
+            setTimeout(resolve, 20 * (attempt + 1))
+          )
+        }
+      }
     })
     pendingSave = currentSave.catch(() => undefined)
     return currentSave

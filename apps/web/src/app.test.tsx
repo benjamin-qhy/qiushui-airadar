@@ -61,7 +61,7 @@ describe('complete web shell', () => {
 
   it('shows all primary pages without demo content', () => {
     const html = renderToStaticMarkup(<App />)
-    expect(html).toContain('qiushuiai-airadar')
+    expect(html).toContain('qiushui-airadar')
     expect(html).toContain('每日精选')
     expect(html).toContain('全部内容')
     expect(html).toContain('异常数据')

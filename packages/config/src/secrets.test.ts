@@ -10,9 +10,7 @@ import {
 
 describe('local secret boundary', () => {
   it('keeps raw values behind the backend reader and exposes only masked status', async () => {
-    const directory = await mkdtemp(
-      join(tmpdir(), 'qiushuiai-airadar-secrets-')
-    )
+    const directory = await mkdtemp(join(tmpdir(), 'qiushui-airadar-secrets-'))
     const file = join(directory, '.env')
     await writeFile(file, 'TIKHUB_TOKEN=super-secret-value\nEMPTY=\n', {
       mode: 0o600,
@@ -41,7 +39,7 @@ describe('local secret boundary', () => {
     'rejects secret files readable by other users on macOS',
     async () => {
       const directory = await mkdtemp(
-        join(tmpdir(), 'qiushuiai-airadar-secrets-')
+        join(tmpdir(), 'qiushui-airadar-secrets-')
       )
       const file = join(directory, '.env')
       await writeFile(file, 'TOKEN=value\n', { mode: 0o644 })
@@ -53,9 +51,7 @@ describe('local secret boundary', () => {
   )
 
   it('updates one credential without exposing or replacing the others', async () => {
-    const directory = await mkdtemp(
-      join(tmpdir(), 'qiushuiai-airadar-secrets-')
-    )
+    const directory = await mkdtemp(join(tmpdir(), 'qiushui-airadar-secrets-'))
     const file = join(directory, '.env')
     await writeFile(file, '# local\nFIRST=keep\nTOKEN=old\n', { mode: 0o600 })
     await updateFileSecret(file, 'TOKEN', 'new value')
@@ -66,5 +62,19 @@ describe('local secret boundary', () => {
       expect((await stat(file)).mode & 0o077).toBe(0)
     await updateFileSecret(file, 'TOKEN', undefined)
     expect(await createFileSecretReader(file).get('TOKEN')).toBeUndefined()
+  })
+
+  it('round-trips a Windows credential path and literal replacement characters', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'airadar-secret-path-'))
+    const file = join(directory, '.env')
+    const value = 'C:\\Users\\Qiushui\\.codex\\auth.json'
+    await updateFileSecret(file, 'CODEX_AUTH_PATH', value)
+    expect(await createFileSecretReader(file).get('CODEX_AUTH_PATH')).toBe(
+      value
+    )
+    await updateFileSecret(file, 'CODEX_AUTH_PATH', '$&-literal')
+    expect(await createFileSecretReader(file).get('CODEX_AUTH_PATH')).toBe(
+      '$&-literal'
+    )
   })
 })

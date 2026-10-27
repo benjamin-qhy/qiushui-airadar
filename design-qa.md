@@ -6,12 +6,12 @@
 - Combined comparison: `/Users/qiushui/.codex/visualizations/2026/09/14/01a0a063-c1b8-78b0-95d2-7f51f4c030f4/airadar-design-comparison-final.png`
 - Viewport: desktop, 1280 x 720 CSS pixels, light theme.
 - Pixels and density: source 1280 x 720, implementation 1280 x 720, captured at the same browser density with no normalization required. The detail capture is 1269 x 714 because the in-app panel chrome resized the tab after interaction.
-- State: source AI 精选 page with one representative card; implementation 每日精选 page with two persisted real items. The reference backend was unavailable, so the source capture used one temporary representative card populated from the same real qiushuiai-airadar item. The reference source directory was not modified.
+- State: source AI 精选 page with one representative card; implementation 每日精选 page with two persisted real items. The reference backend was unavailable, so the source capture used one temporary representative card populated from the same real qiushui-airadar item. The reference source directory was not modified.
 
 **Full-view comparison evidence**
 
 - The combined comparison confirms the same 256px navigation rail, 64px single-row filter header, pale active states, dense seven-column desktop grid, light borders, 8px card radius, and high whitespace content canvas.
-- The retained differences are intentional product constraints: qiushuiai-airadar keeps its own navigation labels, score, topics, actions, real-data notice, and master-detail workflow.
+- The retained differences are intentional product constraints: qiushui-airadar keeps its own navigation labels, score, topics, actions, real-data notice, and master-detail workflow.
 
 **Focused region comparison evidence**
 
@@ -22,7 +22,7 @@
 **Findings**
 
 - No actionable P0, P1, or P2 visual mismatch remains.
-- P3: qiushuiai-airadar media cards are slightly taller because topics and persistent project actions are retained below the title.
+- P3: qiushui-airadar media cards are slightly taller because topics and persistent project actions are retained below the title.
 - P3: the reference capture shows an unrelated backend error toast; it was excluded from fidelity judgment.
 
 **Required fidelity surfaces**
@@ -31,7 +31,7 @@
 - Spacing and layout rhythm: sidebar, header, grid gaps, cover ratio, radius, borders, and content padding match the source structure.
 - Colors and visual tokens: neutral gray canvas, pale selected states, white cards, subtle borders, gradients, and black/white overlays are aligned.
 - Image quality and asset fidelity: the implementation uses persisted source media URLs with object-cover cropping; no placeholder or synthetic asset was introduced.
-- Copy and content: qiushuiai-airadar product labels and real content are intentionally retained.
+- Copy and content: qiushui-airadar product labels and real content are intentionally retained.
 
 **Comparison history**
 
@@ -49,7 +49,7 @@
 **Implementation Checklist**
 
 - [x] Reference-style shell, header, filters, cards, and density.
-- [x] Existing qiushuiai-airadar elements and real-data behavior retained.
+- [x] Existing qiushui-airadar elements and real-data behavior retained.
 - [x] Detail split interaction retained and verified.
 - [x] Full build, tests, and browser console verification completed.
 

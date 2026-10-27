@@ -81,7 +81,7 @@ export function AppShell({
               <Radar className='size-5' />
             </span>
             <div className='min-w-0 group-data-[state=collapsed]/sidebar:hidden'>
-              <div className='font-semibold'>qiushuiai-airadar</div>
+              <div className='font-semibold'>qiushui-airadar</div>
               <div className='text-xs text-muted-foreground'>
                 个人 AI 情报台
               </div>

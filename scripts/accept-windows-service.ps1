@@ -5,7 +5,7 @@ if (-not $IsWindows) {
   throw 'Windows Service acceptance must run on Windows'
 }
 
-$acceptRoot = Join-Path $env:ProgramData "QiushuiAI/AIRadarAcceptance-$env:GITHUB_RUN_ID"
+$acceptRoot = Join-Path $env:ProgramData "qiushui-airadar/acceptance-$env:GITHUB_RUN_ID"
 $packRoot = Join-Path $acceptRoot 'pack'
 $installRoot = Join-Path $acceptRoot 'program'
 $dataRoot = Join-Path $acceptRoot 'data'
@@ -14,9 +14,11 @@ $previousSource = Join-Path $acceptRoot 'previous-release'
 New-Item -ItemType Directory -Force -Path $packRoot, $dataRoot, $previousSource | Out-Null
 Set-Content -Path $secretFile -Value '' -NoNewline
 
+$env:QIUSHUI_AIRADAR_DATA_ROOT = $dataRoot
+$env:QIUSHUI_AIRADAR_SECRET_FILE = $secretFile
 $env:QIUSHUIAI_AIRADAR_DATA_ROOT = $dataRoot
 $env:QIUSHUIAI_AIRADAR_SECRET_FILE = $secretFile
-$serviceName = 'QiushuiAIAIRadar'
+$serviceName = 'qiushui-airadar'
 $port = 43110
 
 function Wait-Health {
@@ -43,7 +45,7 @@ function Find-AiradarNodeProcess {
     Select-Object -First 1
 }
 
-$previousReleaseCommit = 'ae6d470c04f1b8e509ed40bfe155d6718c4414a9'
+$previousReleaseCommit = 'cde1028c02cd87d5bc553dc4cb9d783464c791f4'
 $archive = Join-Path $acceptRoot 'previous-release.tar'
 git archive --format=tar "--output=$archive" $previousReleaseCommit
 tar -xf $archive -C $previousSource
@@ -66,24 +68,37 @@ try {
   }
   $previousProcess.WaitForExit()
 }
-if ((Get-ChildItem -Path (Join-Path $dataRoot 'sources') -File).Count -lt 36) {
-  throw 'Previous release did not create real authority records'
+if (-not (Test-Path (Join-Path $dataRoot 'config/sources.yaml'))) {
+  throw 'Previous release did not initialize source configuration'
+}
+$profile = Join-Path $dataRoot 'config/profile.yaml'
+$profileBefore = Get-FileHash $profile
+Move-Item (Join-Path $dataRoot 'qiushuiai-airadar.sqlite') (Join-Path $dataRoot 'qiushui-airadar.sqlite')
+foreach ($suffix in @('-wal', '-shm')) {
+  $legacyFile = Join-Path $dataRoot "qiushuiai-airadar.sqlite$suffix"
+  if (Test-Path $legacyFile) {
+    Move-Item $legacyFile (Join-Path $dataRoot "qiushui-airadar.sqlite$suffix")
+  }
 }
 $marker = Join-Path $dataRoot 'upgrade-preservation.md'
 Set-Content -Path $marker -Value '# must survive program upgrade'
 
-pnpm --filter '@qiushuiai-airadar/cli' pack --pack-destination $packRoot | Out-Host
-$tarball = Get-ChildItem -Path $packRoot -Filter '*-0.1.0.tgz' | Select-Object -First 1
+pnpm --filter '@qiushui-airadar/cli' pack --pack-destination $packRoot | Out-Host
+$version = (Get-Content -Raw 'apps/cli/package.json' | ConvertFrom-Json).version
+$tarball = Get-ChildItem -Path $packRoot -Filter "*-$version.tgz" | Select-Object -First 1
 if (-not $tarball) { throw 'CLI package tarball was not produced' }
 npm install --prefix $installRoot --ignore-scripts $tarball.FullName | Out-Host
 if ((Get-Content -Raw $marker).Trim() -ne '# must survive program upgrade') {
   throw 'Old-to-new program upgrade changed business data'
 }
-$cliPath = Join-Path $installRoot 'node_modules/@qiushuiai-airadar/cli/dist/cli.js'
+$cliPath = Join-Path $installRoot 'node_modules/@qiushui-airadar/cli/dist/cli.js'
 
 try {
   node $cliPath service install --host 127.0.0.1 --port $port | Out-Host
   Wait-Health
+  if ((Get-FileHash $profile).Hash -ne $profileBefore.Hash) {
+    throw 'Service installation changed existing configuration'
+  }
   $service = Get-Service -Name $serviceName
   if ($service.Status -ne 'Running' -or $service.StartType -ne 'Automatic') {
     throw "Unexpected installed service state: $($service.Status) / $($service.StartType)"

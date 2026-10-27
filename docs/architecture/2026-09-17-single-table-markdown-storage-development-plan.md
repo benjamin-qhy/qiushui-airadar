@@ -11,7 +11,7 @@ scope: content storage, processing state, configuration, and legacy-data replace
 
 ## 1. 这份方案解决什么问题
 
-从本次改造起，qiushuiai-airadar 不再把一条内容拆散到内容、任务、分析、用户状态、互动快照、索引等多张表中。系统只保留一个新建的 SQLite 数据库文件，里面也只保留一张业务表：`contents`。
+从本次改造起，qiushui-airadar 不再把一条内容拆散到内容、任务、分析、用户状态、互动快照、索引等多张表中。系统只保留一个新建的 SQLite 数据库文件，里面也只保留一张业务表：`contents`。
 
 一条内容有两种保存形式：
 
@@ -39,11 +39,11 @@ scope: content storage, processing state, configuration, and legacy-data replace
 
 ## 3. 落盘目录
 
-假设数据根目录为 `$QIUSHUIAI_QIUSHUIAI_AIRADAR_DATA_ROOT`，一条内容的文件结构如下。日期取首次入库时间在 `Asia/Shanghai` 的日历日。目录规则固定为 `<平台>-<博主>-<唯一识别>[-<原始标题>]`；中括号表示原文有标题时才增加这一段。`博主`优先使用来源账号的公开 handle/名称；文章没有明确作者时使用来源配置中的账号名称。`唯一识别`对普通内容使用平台内容 ID，对文章使用规范化链接的 SHA-256 摘要；文章仍以完整规范化链接去重，摘要只用于目录名。数据库保存相对路径。
+假设数据根目录为 `$QIUSHUIAI_QIUSHUI_AIRADAR_DATA_ROOT`，一条内容的文件结构如下。日期取首次入库时间在 `Asia/Shanghai` 的日历日。目录规则固定为 `<平台>-<博主>-<唯一识别>[-<原始标题>]`；中括号表示原文有标题时才增加这一段。`博主`优先使用来源账号的公开 handle/名称；文章没有明确作者时使用来源配置中的账号名称。`唯一识别`对普通内容使用平台内容 ID，对文章使用规范化链接的 SHA-256 摘要；文章仍以完整规范化链接去重，摘要只用于目录名。数据库保存相对路径。
 
 ```text
-$QIUSHUIAI_QIUSHUIAI_AIRADAR_DATA_ROOT/
-  qiushuiai-airadar.sqlite                 # 仅含 contents 表和普通索引
+$QIUSHUIAI_QIUSHUI_AIRADAR_DATA_ROOT/
+  qiushui-airadar.sqlite                 # 仅含 contents 表和普通索引
   contents/
     20260917/
       x-OpenAI-<平台内容ID>-<原始标题>/ # 有原始标题

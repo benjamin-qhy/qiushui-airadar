@@ -1,19 +1,19 @@
 # Issue tracker: GitHub
 
 Issues and specs live in GitHub Issues:
-`benjamin-qhy/qiushuiai-airadar`
+`benjamin-qhy/qiushui-airadar`
 
 Use the `gh` CLI and explicitly include:
-`--repo benjamin-qhy/qiushuiai-airadar`
+`--repo benjamin-qhy/qiushui-airadar`
 
 ## Common operations
 
-- Create: `gh issue create --repo benjamin-qhy/qiushuiai-airadar`
-- Read: `gh issue view <number> --comments --repo benjamin-qhy/qiushuiai-airadar`
-- List: `gh issue list --repo benjamin-qhy/qiushuiai-airadar`
-- Comment: `gh issue comment <number> --repo benjamin-qhy/qiushuiai-airadar`
-- Label: `gh issue edit <number> --add-label "..." --repo benjamin-qhy/qiushuiai-airadar`
-- Close: `gh issue close <number> --repo benjamin-qhy/qiushuiai-airadar`
+- Create: `gh issue create --repo benjamin-qhy/qiushui-airadar`
+- Read: `gh issue view <number> --comments --repo benjamin-qhy/qiushui-airadar`
+- List: `gh issue list --repo benjamin-qhy/qiushui-airadar`
+- Comment: `gh issue comment <number> --repo benjamin-qhy/qiushui-airadar`
+- Label: `gh issue edit <number> --add-label "..." --repo benjamin-qhy/qiushui-airadar`
+- Close: `gh issue close <number> --repo benjamin-qhy/qiushui-airadar`
 
 ## Pull requests as a triage surface
 

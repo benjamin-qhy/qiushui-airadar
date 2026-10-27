@@ -10,7 +10,7 @@ export default defineConfig({
     port: 5173,
     strictPort: true,
     proxy: {
-      '/api': process.env.QIUSHUIAI_AIRADAR_API_URL ?? 'http://127.0.0.1:43111',
+      '/api': process.env.QIUSHUI_AIRADAR_API_URL ?? 'http://127.0.0.1:43111',
     },
   },
   resolve: {

@@ -1,7 +1,7 @@
 # 真实信源与供应商访问准备
 
 日期：2026-09-14
-对应 Issue：[#16 准备六类真实信源与供应商访问](https://github.com/benjamin-qhy/qiushuiai-airadar/issues/16)
+对应 Issue：[#16 准备六类真实信源与供应商访问](https://github.com/benjamin-qhy/qiushui-airadar/issues/16)
 
 ## 结论
 

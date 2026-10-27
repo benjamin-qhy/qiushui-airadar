@@ -90,11 +90,11 @@ async function main(): Promise<void> {
     'Acceptance analysis must use gpt-5.3-codex-spark'
   )
   const repository = await RuntimeRepository.open(
-    required('QIUSHUIAI_AIRADAR_ACCEPT_ROOT')
+    required('QIUSHUI_AIRADAR_ACCEPT_ROOT')
   )
   let repositoryOpen = true
   const scratch = await mkdtemp(
-    path.join(tmpdir(), 'qiushuiai-airadar-cn-accept-')
+    path.join(tmpdir(), 'qiushui-airadar-cn-accept-')
   )
   try {
     const tikHubToken = required('TIKHUB_API_KEY')
@@ -504,7 +504,7 @@ async function main(): Promise<void> {
     await repository.close()
     repositoryOpen = false
     const service = createServiceApp({
-      dataRoot: required('QIUSHUIAI_AIRADAR_ACCEPT_ROOT'),
+      dataRoot: required('QIUSHUI_AIRADAR_ACCEPT_ROOT'),
     })
     const address = await service.start({ host: '127.0.0.1', port: 0 })
     let webIds: string[] = []

@@ -12,8 +12,8 @@ import { request } from 'node:http'
 
 import { expect, it } from 'vitest'
 
-import { initializeSingleTableConfig } from '@qiushuiai-airadar/config'
-import { SingleTableRepository } from '@qiushuiai-airadar/runtime'
+import { initializeSingleTableConfig } from '@qiushui-airadar/config'
+import { SingleTableRepository } from '@qiushui-airadar/runtime'
 
 import { createSingleTableServiceApp } from './single-table-service.js'
 
@@ -48,9 +48,7 @@ it('accepts a same-origin LAN page while rejecting another site', async () => {
         outgoing.end(body)
       })
     expect(await post(headers.origin)).toBe(409)
-    expect(
-      await post('https://evil.example')
-    ).toBe(403)
+    expect(await post('https://evil.example')).toBe(403)
   } finally {
     await service?.stop()
     await rm(root, { recursive: true, force: true })
@@ -194,7 +192,7 @@ it('starts one manual translation for completed English content and rejects retr
 
 it('reclassifies a previously failed X plugin directory on retry without fetching it', async () => {
   const root = await mkdtemp(
-    path.join(tmpdir(), 'qiushuiai-airadar-directory-retry-')
+    path.join(tmpdir(), 'qiushui-airadar-directory-retry-')
   )
   let service: ReturnType<typeof createSingleTableServiceApp> | undefined
   try {
@@ -247,9 +245,7 @@ it('reclassifies a previously failed X plugin directory on retry without fetchin
 })
 
 it('serves and updates content from the single table, with field-only keyword search', async () => {
-  const root = await mkdtemp(
-    path.join(tmpdir(), 'qiushuiai-airadar-single-api-')
-  )
+  const root = await mkdtemp(path.join(tmpdir(), 'qiushui-airadar-single-api-'))
   let service: ReturnType<typeof createSingleTableServiceApp> | undefined
   try {
     const configRoot = await initializeSingleTableConfig(
@@ -413,7 +409,7 @@ it('serves and updates content from the single table, with field-only keyword se
 
 it('only reruns a failed row after an explicit manual retry request', async () => {
   const root = await mkdtemp(
-    path.join(tmpdir(), 'qiushuiai-airadar-manual-retry-')
+    path.join(tmpdir(), 'qiushui-airadar-manual-retry-')
   )
   let service: ReturnType<typeof createSingleTableServiceApp> | undefined
   try {
@@ -529,12 +525,16 @@ it('processes a waiting video from a supplied transcript without rediscovering i
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({
-          transcript: 'The complete spoken content of this video is available here.',
+          transcript:
+            'The complete spoken content of this video is available here.',
         }),
       }
     )
     const reopened = await SingleTableRepository.open(root)
-    expect(response.status, String(reopened.getById(row.id)?.last_error ?? '')).toBe(200)
+    expect(
+      response.status,
+      String(reopened.getById(row.id)?.last_error ?? '')
+    ).toBe(200)
     expect(reopened.getById(row.id)?.process_status).toBe('completed')
     expect(await reopened.readBody(row.id, 'en')).toContain('spoken content')
     reopened.close()
@@ -617,9 +617,7 @@ it('retries model-failed rows in a persisted batch without reprocessing success'
 })
 
 it('manages sources, provider credentials, connection tests, and validated YAML', async () => {
-  const root = await mkdtemp(
-    path.join(tmpdir(), 'qiushuiai-airadar-management-')
-  )
+  const root = await mkdtemp(path.join(tmpdir(), 'qiushui-airadar-management-'))
   let service: ReturnType<typeof createSingleTableServiceApp> | undefined
   const modelConnectionTests: Array<{
     providerId: string

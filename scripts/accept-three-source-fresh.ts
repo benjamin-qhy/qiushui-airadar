@@ -25,7 +25,7 @@ function required(name: string): string {
 
 const testRoot = path.join(
   homedir(),
-  '.qiushuiai-airadar',
+  '.qiushui-airadar',
   'test-runs',
   'three-source-10'
 )

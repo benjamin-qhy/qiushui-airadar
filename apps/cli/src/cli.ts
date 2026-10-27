@@ -3,17 +3,24 @@ import { join } from 'node:path'
 import {
   asSecretStatusReader,
   createFileSecretReader,
-} from '@qiushuiai-airadar/config'
+} from '@qiushui-airadar/config'
 import {
   createSingleTableServiceApp,
   type ServiceApp,
-} from '@qiushuiai-airadar/service'
+} from '@qiushui-airadar/service'
 import { runCli } from './index.js'
 import { productionDataRoot } from './paths.js'
 
+// Existing launch scripts may still use the previous environment prefix.
+for (const [name, value] of Object.entries(process.env)) {
+  if (!name.startsWith('QIUSHUIAI_AIRADAR_')) continue
+  const current = name.replace('QIUSHUIAI_AIRADAR_', 'QIUSHUI_AIRADAR_')
+  if (!process.env[current]) process.env[current] = value
+}
+
 const secretFile =
-  process.env.QIUSHUIAI_AIRADAR_SECRET_FILE ??
-  join(process.env.QIUSHUIAI_AIRADAR_DATA_ROOT ?? productionDataRoot(), '.env')
+  process.env.QIUSHUI_AIRADAR_SECRET_FILE ??
+  join(process.env.QIUSHUI_AIRADAR_DATA_ROOT ?? productionDataRoot(), '.env')
 const secretReader = createFileSecretReader(secretFile)
 let activeService: ServiceApp | undefined
 
@@ -25,14 +32,26 @@ try {
       'YOUTUBE_API_KEY',
       'GETBIJI_API_KEY',
       'GETBIJI_CLIENT_ID',
-      'QIUSHUIAI_AIRADAR_TRANSCRIBER_URL',
-      'QIUSHUIAI_AIRADAR_WEB_ORIGINS',
+      'QIUSHUI_AIRADAR_TRANSCRIBER_URL',
+      'QIUSHUI_AIRADAR_WEB_ORIGINS',
       'CODEX_AUTH_PATH',
     ]) {
-      const value = await secretReader.get(name).catch((error: unknown) => {
-        if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined
-        throw error
-      })
+      const value = await secretReader
+        .get(name)
+        .then(
+          async (current) =>
+            current ??
+            (name.startsWith('QIUSHUI_AIRADAR_')
+              ? await secretReader.get(
+                  name.replace('QIUSHUI_AIRADAR_', 'QIUSHUIAI_AIRADAR_')
+                )
+              : undefined)
+        )
+        .catch((error: unknown) => {
+          if ((error as NodeJS.ErrnoException).code === 'ENOENT')
+            return undefined
+          throw error
+        })
       if (value && !process.env[name]) process.env[name] = value
     }
   }
@@ -54,6 +73,6 @@ try {
   }
 } catch (error) {
   const message = error instanceof Error ? error.message : 'Unknown error'
-  process.stderr.write(`qiushuiai-airadar: ${message}\n`)
+  process.stderr.write(`qiushui-airadar: ${message}\n`)
   process.exitCode = 1
 }

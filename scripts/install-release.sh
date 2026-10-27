@@ -1,12 +1,14 @@
 #!/bin/sh
 set -eu
 
-repository="benjamin-qhy/qiushuiai-airadar"
+repository="benjamin-qhy/qiushui-airadar"
 old_root="$HOME/.airadar"
-new_root="$HOME/.qiushuiai-airadar"
+previous_root="$HOME/.qiushuiai-airadar"
+new_root="$HOME/.qiushui-airadar"
 program_root="$new_root/program"
 production_data_root="$new_root/production-data"
-port="${QIUSHUIAI_AIRADAR_PORT:-43120}"
+port="${QIUSHUI_AIRADAR_PORT:-${QIUSHUIAI_AIRADAR_PORT:-43120}}"
+bind_host="${QIUSHUI_AIRADAR_HOST:-0.0.0.0}"
 
 find_node_24() {
   for candidate in \
@@ -61,7 +63,16 @@ configure_shell_path() {
       ;;
   esac
 
-  marker="# >>> qiushuiai-airadar installer >>>"
+  if [ -f "$shell_config" ] && grep -F '# >>> qiushuiai-airadar installer >>>' "$shell_config" >/dev/null 2>&1; then
+    cp -p "$shell_config" "$shell_config.before-qiushui-airadar"
+    node - "$shell_config" <<'NODE'
+const fs = require('node:fs');
+const file = process.argv[2];
+const original = fs.readFileSync(file, 'utf8');
+fs.writeFileSync(file, original.replace(/^# >>> qiushuiai-airadar installer >>>\r?\n[\s\S]*?^# <<< qiushuiai-airadar installer <<<\r?\n?/gm, ''));
+NODE
+  fi
+  marker="# >>> qiushui-airadar installer >>>"
   if [ -f "$shell_config" ] && grep -F "$marker" "$shell_config" >/dev/null 2>&1; then
     printf '%s\n' "$shell_config"
     return 0
@@ -72,8 +83,8 @@ configure_shell_path() {
   escaped_node_bin="$(printf '%s' "$node_bin" | sed "s/'/'\\\\''/g")"
   {
     printf '%s\n' "$marker"
-    printf "export PATH='%s':\"\$HOME/.qiushuiai-airadar/program/bin:\$PATH\"\n" "$escaped_node_bin"
-    printf '%s\n' "# <<< qiushuiai-airadar installer <<<"
+    printf "export PATH='%s':\"\$HOME/.qiushui-airadar/program/bin:\$PATH\"\n" "$escaped_node_bin"
+    printf '%s\n' "# <<< qiushui-airadar installer <<<"
   } >> "$shell_config"
   printf '%s\n' "$shell_config"
 }
@@ -85,37 +96,48 @@ if [ "${1:-}" = "--configure-path-only" ]; then
   exit 0
 fi
 
-temporary="$(mktemp -d "${TMPDIR:-/tmp}/qiushuiai-airadar-install.XXXXXX")"
+temporary="$(mktemp -d "${TMPDIR:-/tmp}/qiushui-airadar-install.XXXXXX")"
 trap 'rm -rf "$temporary"' EXIT HUP INT TERM
 
-release_json="$temporary/qiushuiai-airadar-release.json"
+release_json="$temporary/qiushui-airadar-release.json"
 curl -fsSL \
-  "https://github.com/$repository/releases/latest/download/qiushuiai-airadar-release.json" \
+  "https://github.com/$repository/releases/latest/download/qiushui-airadar-release.json" \
   -o "$release_json"
-version="$(node -e "const r=require(process.argv[1]); const v=String(r.version||''); if(!/^\\d+\\.\\d+\\.\\d+$/.test(v)||r.package!=='qiushuiai-airadar-cli-'+v+'.tgz'||r.checksum!==r.package+'.sha256') process.exit(1); process.stdout.write(v)" "$release_json")"
-package="qiushuiai-airadar-cli-$version.tgz"
+version="$(node -e "const r=require(process.argv[1]); const v=String(r.version||''); if(!/^\\d+\\.\\d+\\.\\d+$/.test(v)||r.package!=='qiushui-airadar-cli-'+v+'.tgz'||r.checksum!==r.package+'.sha256') process.exit(1); process.stdout.write(v)" "$release_json")"
+package="qiushui-airadar-cli-$version.tgz"
 base="https://github.com/$repository/releases/download/v$version"
 
 curl -fL "$base/$package" -o "$temporary/$package"
 curl -fL "$base/$package.sha256" -o "$temporary/$package.sha256"
 (cd "$temporary" && shasum -a 256 -c "$package.sha256")
 
+if [ -e "$previous_root" ]; then
+  if [ -e "$old_root" ] || [ -e "$new_root" ]; then
+    echo "迁移已停止：新旧安装目录同时存在，请先人工确认数据。" >&2
+    exit 1
+  fi
+  old_root="$previous_root"
+fi
 if [ -e "$old_root" ] && [ -e "$new_root" ]; then
   echo "迁移已停止：$old_root 和 $new_root 同时存在，请先人工确认数据。" >&2
   exit 1
 fi
 
+# Resolve dependencies before stopping the running service.
+npm install -g --prefix "$temporary/program" --ignore-scripts --no-audit --no-fund "$temporary/$package"
+
 # Stop every service name used by released predecessors before moving data.
 for cli in \
   "$old_root/installed-program/bin/airadar" \
+  "$old_root/program/bin/qiushuiai-airadar" \
   "$new_root/installed-program/bin/airadar" \
-  "$new_root/program/bin/qiushuiai-airadar"
+  "$new_root/program/bin/qiushui-airadar"
 do
   if [ -x "$cli" ]; then "$cli" service stop >/dev/null 2>&1 || true; fi
 done
 if [ "$(uname -s)" = "Darwin" ]; then
   uid="$(id -u)"
-  for label in ai.qiushuiai.airadar-installed ai.qiushuiai.airadar-v2 ai.qiushuiai.qiushuiai-airadar-installed; do
+  for label in ai.qiushuiai.airadar-installed ai.qiushuiai.airadar-v2 ai.qiushui.qiushui-airadar-installed ai.qiushuiai.qiushuiai-airadar ai.qiushuiai.qiushuiai-airadar-installed; do
     launchctl bootout "gui/$uid/$label" >/dev/null 2>&1 || true
   done
 fi
@@ -127,11 +149,13 @@ fi
 
 mkdir -p "$new_root/backups"
 chmod 700 "$new_root" "$new_root/backups"
-stamp="$(date +%Y%m%d-%H%M%S)"
+stamp="$(date +%Y%m%d-%H%M%S)-$$"
 if [ "$(uname -s)" = "Darwin" ]; then
   for plist in \
     "$HOME/Library/LaunchAgents/ai.qiushuiai.airadar-installed.plist" \
     "$HOME/Library/LaunchAgents/ai.qiushuiai.airadar-v2.plist" \
+    "$HOME/Library/LaunchAgents/ai.qiushui.qiushui-airadar-installed.plist" \
+    "$HOME/Library/LaunchAgents/ai.qiushuiai.qiushuiai-airadar.plist" \
     "$HOME/Library/LaunchAgents/ai.qiushuiai.qiushuiai-airadar-installed.plist"
   do
     if [ -f "$plist" ]; then
@@ -165,16 +189,30 @@ fi
 
 move_legacy_directory "$new_root/installed-data" "$production_data_root"
 
+if [ -d "$production_data_root" ]; then
+  backup="$new_root/backups/$stamp-before-$version"
+  mkdir -p "$backup"
+  cp -R "$production_data_root" "$backup/production-data"
+  echo "正式数据备份：$backup"
+fi
+
+
 rename_legacy_database() {
   data_root="$1"
-  if [ ! -f "$data_root/airadar.sqlite" ]; then return; fi
-  if [ -e "$data_root/qiushuiai-airadar.sqlite" ]; then
+  legacy_database="$data_root/qiushuiai-airadar.sqlite"
+  if [ ! -f "$legacy_database" ]; then legacy_database="$data_root/airadar.sqlite"; fi
+  if [ ! -f "$legacy_database" ]; then return; fi
+  if [ -f "$data_root/airadar.sqlite" ] && [ -f "$data_root/qiushuiai-airadar.sqlite" ]; then
+    echo "迁移已停止：同一目录存在两个旧数据库，请先人工确认。" >&2
+    exit 1
+  fi
+  if [ -e "$data_root/qiushui-airadar.sqlite" ]; then
     echo "迁移已停止：$data_root 中同时存在新旧数据库，请先人工确认数据。" >&2
     exit 1
   fi
   for suffix in "" "-shm" "-wal"; do
-    if [ -e "$data_root/airadar.sqlite$suffix" ]; then
-      mv "$data_root/airadar.sqlite$suffix" "$data_root/qiushuiai-airadar.sqlite$suffix"
+    if [ -e "$legacy_database$suffix" ]; then
+      mv "$legacy_database$suffix" "$data_root/qiushui-airadar.sqlite$suffix"
     fi
   done
 }
@@ -196,16 +234,13 @@ if [ -d "$new_root/installed-service" ]; then
   mv "$new_root/installed-service" "$new_root/service"
 fi
 
-if [ -d "$production_data_root" ]; then
-  backup="$new_root/backups/$stamp-before-$version"
-  mkdir -p "$backup"
-  cp -R "$production_data_root" "$backup/production-data"
-  echo "正式数据备份：$backup"
-fi
 
-npm install -g --prefix "$program_root" --ignore-scripts --no-audit --no-fund "$temporary/$package"
-cli="$program_root/bin/qiushuiai-airadar"
-"$cli" service install --port "$port"
+if [ -d "$program_root" ]; then
+  mv "$program_root" "$new_root/backups/program-$stamp-before-$version"
+fi
+mv "$temporary/program" "$program_root"
+cli="$program_root/bin/qiushui-airadar"
+"$cli" service install --host "$bind_host" --port "$port"
 installed_version="$("$cli" --version)"
 if [ "$installed_version" != "$version" ]; then
   echo "版本校验失败：期望 $version，实际 $installed_version" >&2
@@ -214,8 +249,8 @@ fi
 curl --noproxy '*' --retry 10 --retry-connrefused --retry-delay 1 -fsS \
   "http://127.0.0.1:$port/health" >/dev/null
 shell_config="$(configure_shell_path)"
-echo "qiushuiai-airadar $version 已安装并运行：http://127.0.0.1:$port"
+echo "qiushui-airadar $version 已安装并运行：http://127.0.0.1:$port"
 echo "命令环境已自动配置：$shell_config（重新打开终端后生效）"
-if [ "$(uname -s)" = "Darwin" ] && [ "${QIUSHUIAI_AIRADAR_OPEN_BROWSER:-1}" = "1" ]; then
+if [ "$(uname -s)" = "Darwin" ] && [ "${QIUSHUI_AIRADAR_OPEN_BROWSER:-1}" = "1" ]; then
   open "http://127.0.0.1:$port" >/dev/null 2>&1 || true
 fi

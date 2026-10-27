@@ -4,7 +4,7 @@ import {
   type ContentKind,
   type Source,
   type SourceType,
-} from '@qiushuiai-airadar/domain'
+} from '@qiushui-airadar/domain'
 
 /** Confirmed destinations that cannot provide a standalone article body. */
 export function classifyNonArticlePage(value: string): string | undefined {

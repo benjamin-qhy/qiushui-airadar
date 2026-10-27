@@ -26,7 +26,7 @@ afterEach(async () => {
 })
 
 it('validates editable YAML before replacing the saved file', async () => {
-  const root = await mkdtemp(path.join(tmpdir(), 'qiushuiai-airadar-edit-'))
+  const root = await mkdtemp(path.join(tmpdir(), 'qiushui-airadar-edit-'))
   roots.push(root)
   const configRoot = await initializeSingleTableConfig(
     path.resolve(import.meta.dirname, '../../../config'),
@@ -132,7 +132,7 @@ it('normalizes legacy model settings and saves per-stage routing', async () => {
     })
   ).toEqual({ provider: 'codex', default: 'legacy-model', stages: {} })
 
-  const root = await mkdtemp(path.join(tmpdir(), 'qiushuiai-airadar-models-'))
+  const root = await mkdtemp(path.join(tmpdir(), 'qiushui-airadar-models-'))
   roots.push(root)
   const configRoot = await initializeSingleTableConfig(
     path.resolve(import.meta.dirname, '../../../config'),
@@ -216,7 +216,7 @@ it('drops legacy collection limits instead of sending them to providers', () => 
 })
 
 it('initializes editable YAML under the new data root without overwriting edits', async () => {
-  const root = await mkdtemp(path.join(tmpdir(), 'qiushuiai-airadar-config-'))
+  const root = await mkdtemp(path.join(tmpdir(), 'qiushui-airadar-config-'))
   roots.push(root)
   const templates = path.resolve(import.meta.dirname, '../../../config')
   const configRoot = await initializeSingleTableConfig(templates, root)
@@ -243,7 +243,7 @@ it('initializes editable YAML under the new data root without overwriting edits'
 })
 
 it('removes legacy collection limits from an existing installation', async () => {
-  const root = await mkdtemp(path.join(tmpdir(), 'qiushuiai-airadar-migrate-'))
+  const root = await mkdtemp(path.join(tmpdir(), 'qiushui-airadar-migrate-'))
   roots.push(root)
   const templates = path.resolve(import.meta.dirname, '../../../config')
   const configRoot = await initializeSingleTableConfig(templates, root)

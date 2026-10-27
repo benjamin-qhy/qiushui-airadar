@@ -22,7 +22,7 @@ function outputBuffer() {
   }
 }
 
-describe('qiushuiai-airadar CLI', () => {
+describe('qiushui-airadar CLI', () => {
   it('rejects invalid ports and unsupported installation hosts', async () => {
     for (const args of [
       ['service', 'run', '--port', '123junk'],
@@ -39,7 +39,7 @@ describe('qiushuiai-airadar CLI', () => {
     const stdout = outputBuffer()
     expect(await runCli(['status'], { stdout })).toBe(0)
     expect(JSON.parse(stdout.value())).toEqual({
-      name: 'qiushuiai-airadar',
+      name: 'qiushui-airadar',
       status: 'ready',
       version: packageVersion,
     })
@@ -123,14 +123,14 @@ describe('qiushuiai-airadar CLI', () => {
         serviceManager: {
           async execute(command, options) {
             calls.push(`${command}:${options.host}:${options.port}`)
-            return { service: 'qiushuiai-airadar', status: 'installed' }
+            return { service: 'qiushui-airadar', status: 'installed' }
           },
         },
       })
     ).toBe(0)
     expect(calls).toEqual(['install:127.0.0.1:43120'])
     expect(JSON.parse(stdout.value())).toEqual({
-      service: 'qiushuiai-airadar',
+      service: 'qiushui-airadar',
       status: 'installed',
     })
   })
@@ -179,9 +179,9 @@ describe('service definitions', () => {
   it('creates a launchd agent with startup and crash restart enabled', () => {
     const definition = createLaunchdDefinition({
       nodePath: '/opt/node/bin/node',
-      cliPath: '/opt/qiushuiai-airadar/cli.js',
-      dataRoot: '/Users/test/.qiushuiai-airadar/data',
-      logRoot: '/Users/test/.qiushuiai-airadar/logs',
+      cliPath: '/opt/qiushui-airadar/cli.js',
+      dataRoot: '/Users/test/.qiushui-airadar/data',
+      logRoot: '/Users/test/.qiushui-airadar/logs',
       host: '127.0.0.1',
       port: 43110,
       runtimeEnvironment: {
@@ -190,8 +190,8 @@ describe('service definitions', () => {
     })
     expect(definition).toContain('<key>RunAtLoad</key>')
     expect(definition).toContain('<key>KeepAlive</key>')
-    expect(definition).toContain('/opt/qiushuiai-airadar/cli.js')
-    expect(definition).toContain('QIUSHUIAI_AIRADAR_DATA_ROOT')
+    expect(definition).toContain('/opt/qiushui-airadar/cli.js')
+    expect(definition).toContain('QIUSHUI_AIRADAR_DATA_ROOT')
     expect(definition).toContain('CODEX_AUTH_PATH')
     expect(definition).toContain('/Users/test/.codex/auth.json')
     expect(definition).toContain('127.0.0.1')
@@ -200,9 +200,9 @@ describe('service definitions', () => {
   it('creates a WinSW definition with restart, explicit paths, and no secret values', () => {
     const definition = createWindowsServiceDefinition({
       nodePath: 'C:\\Program Files\\nodejs\\node.exe',
-      cliPath: 'C:\\qiushuiai-airadar\\cli.js',
-      dataRoot: 'C:\\Users\\test\\.qiushuiai-airadar\\data',
-      logRoot: 'C:\\Users\\test\\.qiushuiai-airadar\\logs',
+      cliPath: 'C:\\qiushui-airadar\\cli.js',
+      dataRoot: 'C:\\Users\\test\\.qiushui-airadar\\data',
+      logRoot: 'C:\\Users\\test\\.qiushui-airadar\\logs',
       host: '127.0.0.1',
       port: 43110,
       runtimeEnvironment: {
@@ -211,8 +211,8 @@ describe('service definitions', () => {
     })
     expect(definition).toContain('<onfailure action="restart"')
     expect(definition).toContain('<startmode>Automatic</startmode>')
-    expect(definition).toContain('C:\\qiushuiai-airadar\\cli.js')
-    expect(definition).toContain('QIUSHUIAI_AIRADAR_DATA_ROOT')
+    expect(definition).toContain('C:\\qiushui-airadar\\cli.js')
+    expect(definition).toContain('QIUSHUI_AIRADAR_DATA_ROOT')
     expect(definition).toContain('<username>LocalSystem</username>')
     expect(definition).toContain('CODEX_AUTH_PATH')
     expect(definition).toContain('C:\\Users\\test\\.codex\\auth.json')

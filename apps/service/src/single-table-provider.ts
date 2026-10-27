@@ -4,7 +4,7 @@ import {
   type ConfiguredSource,
   type DiscoveredContent,
   type SingleTableSourceProvider,
-} from '@qiushuiai-airadar/pipeline'
+} from '@qiushui-airadar/pipeline'
 import {
   createTikHubXProvider,
   createTikHubYouTubeProvider,
@@ -16,12 +16,12 @@ import {
   normalizeYouTubeIdentity,
   type DiscoveredItem,
   type SourceAdapter,
-} from '@qiushuiai-airadar/source-adapters'
-import type { LogEvent } from '@qiushuiai-airadar/runtime'
+} from '@qiushui-airadar/source-adapters'
+import type { LogEvent } from '@qiushui-airadar/runtime'
 import {
   defaultProviderRoutes,
   type ProviderRoutes,
-} from '@qiushuiai-airadar/config'
+} from '@qiushui-airadar/config'
 
 interface ProviderOptions {
   tikHubToken?: string

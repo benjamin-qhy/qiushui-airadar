@@ -5,13 +5,13 @@ import {
   type OriginalContent,
   type SingleTableRepository,
   type ScoringRules,
-} from '@qiushuiai-airadar/runtime'
+} from '@qiushui-airadar/runtime'
 
 import {
   processSingleTableContent,
   type SingleTableModelGateway,
 } from './single-table-flow.js'
-import { classifyNonArticlePage } from '@qiushuiai-airadar/source-adapters'
+import { classifyNonArticlePage } from '@qiushui-airadar/source-adapters'
 
 export interface ConfiguredSource {
   id: string

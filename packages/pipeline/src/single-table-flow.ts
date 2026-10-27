@@ -22,7 +22,7 @@ import type {
   OriginalContent,
   ScoreDimension,
   ScoringRules,
-} from '@qiushuiai-airadar/runtime'
+} from '@qiushui-airadar/runtime'
 import { createReadOnlyCodexCredentialStore } from './index.js'
 import {
   automaticTranslationSkipReason,
@@ -357,6 +357,7 @@ function getMarkdownSection(
   name: string,
   next: string
 ): string {
+  markdown = markdown.replaceAll('\r\n', '\n')
   const start = markdown.indexOf(`## ${name}\n`)
   const end = markdown.indexOf(`## ${next}\n`, start + 3)
   if (start < 0 || end < 0) throw new Error(`Prompt section missing: ${name}`)

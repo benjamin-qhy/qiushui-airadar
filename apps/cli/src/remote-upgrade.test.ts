@@ -28,8 +28,8 @@ describe('remote release versions', () => {
         return new Response(
           JSON.stringify({
             version: '0.4.0',
-            package: 'qiushuiai-airadar-cli-0.4.0.tgz',
-            checksum: 'qiushuiai-airadar-cli-0.4.0.tgz.sha256',
+            package: 'qiushui-airadar-cli-0.4.0.tgz',
+            checksum: 'qiushui-airadar-cli-0.4.0.tgz.sha256',
           })
         )
       }) as typeof fetch,
@@ -42,7 +42,7 @@ describe('remote release versions', () => {
       stdout: { write() {} },
     })
     expect(requested).toBe(
-      'https://github.com/benjamin-qhy/qiushuiai-airadar/releases/latest/download/qiushuiai-airadar-release.json'
+      'https://github.com/benjamin-qhy/qiushui-airadar/releases/latest/download/qiushui-airadar-release.json'
     )
     expect(result.changed).toBe(false)
     expect(stopped).toBe(false)

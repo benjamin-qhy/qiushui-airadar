@@ -1,5 +1,5 @@
 {
-  "name": "@qiushuiai-airadar/pipeline",
+  "name": "@qiushui-airadar/pipeline",
   "private": true,
   "version": "0.1.0",
   "type": "module",
@@ -19,9 +19,9 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
-    "@qiushuiai-airadar/domain": "workspace:*",
-    "@qiushuiai-airadar/runtime": "workspace:*",
-    "@qiushuiai-airadar/source-adapters": "workspace:*",
+    "@qiushui-airadar/domain": "workspace:*",
+    "@qiushui-airadar/runtime": "workspace:*",
+    "@qiushui-airadar/source-adapters": "workspace:*",
     "@earendil-works/pi-ai": "0.85.1",
     "@mozilla/readability": "0.6.0",
     "fast-xml-parser": "5.11.1",

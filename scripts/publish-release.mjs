@@ -11,13 +11,13 @@ const tag = `v${version}`
 const archive = path.join(
   root,
   'release',
-  `qiushuiai-airadar-cli-${version}.tgz`
+  `qiushui-airadar-cli-${version}.tgz`
 )
 const checksum = `${archive}.sha256`
 const releaseManifest = path.join(
   root,
   'release',
-  'qiushuiai-airadar-release.json'
+  'qiushui-airadar-release.json'
 )
 for (const file of [archive, checksum, releaseManifest]) await access(file)
 
@@ -53,7 +53,7 @@ execFileSync(
     '--target',
     head,
     '--title',
-    `qiushuiai-airadar ${version}`,
+    `qiushui-airadar ${version}`,
     '--generate-notes',
   ],
   { cwd: root, stdio: 'inherit' }

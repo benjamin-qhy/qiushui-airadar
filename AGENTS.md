@@ -2,7 +2,7 @@
 
 ### Issue tracker
 
-Issues are tracked in GitHub Issues for `benjamin-qhy/qiushuiai-airadar`. See `docs/agents/issue-tracker.md`.
+Issues are tracked in GitHub Issues for `benjamin-qhy/qiushui-airadar`. See `docs/agents/issue-tracker.md`.
 
 ### Triage labels
 

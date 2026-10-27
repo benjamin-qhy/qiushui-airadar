@@ -17,10 +17,10 @@ try {
 
 const binary = path.join(
   homedir(),
-  '.qiushuiai-airadar',
+  '.qiushui-airadar',
   'program',
   'bin',
-  platform() === 'win32' ? 'qiushuiai-airadar.cmd' : 'qiushuiai-airadar'
+  platform() === 'win32' ? 'qiushui-airadar.cmd' : 'qiushui-airadar'
 )
 const result = spawnSync(binary, ['service', 'start'], { stdio: 'inherit' })
 if (result.error) {
