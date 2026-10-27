@@ -126,9 +126,20 @@ try {
   manifest.version = `${currentVersion}-acceptance.1`
   delete manifest.devDependencies
   await writeFile(join(staging, 'package.json'), JSON.stringify(manifest))
-  await execute('npm', ['pack', '--pack-destination', packRoot], {
-    cwd: staging,
-  })
+  await execute(
+    process.platform === 'win32' ? process.execPath : 'npm',
+    [
+      ...(process.platform === 'win32'
+        ? [join(dirname(process.execPath), 'node_modules/npm/bin/npm-cli.js')]
+        : []),
+      'pack',
+      '--pack-destination',
+      packRoot,
+    ],
+    {
+      cwd: staging,
+    }
+  )
   const oldPackage = (await readdir(packRoot)).find((name) =>
     name.endsWith('.tgz')
   )!
