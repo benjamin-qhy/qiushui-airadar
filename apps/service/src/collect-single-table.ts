@@ -120,6 +120,9 @@ export async function collectSingleTable(options: {
     tracker.run.message = interrupted
       ? '服务已停止，本轮进度已保存。重新启动后点击“继续上轮采集”。'
       : '采集任务异常退出，请检查信源和模型配置后重新执行。'
+    const code = (error as NodeJS.ErrnoException)?.code
+    if (!interrupted && code && /^[A-Z_0-9]{1,40}$/u.test(code))
+      tracker.run.message += ` 错误代码：${code}。`
     addCollectionRunEvent(tracker.run, {
       action: interrupted ? 'collection-interrupted' : 'collection-failed',
       status: interrupted ? 'paused' : 'failed',

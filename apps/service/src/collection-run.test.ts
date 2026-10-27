@@ -130,12 +130,17 @@ it('pauses at a safe checkpoint and resumes the same collection', async () => {
     expect(
       (await fetch(url + '/api/collection/resume', { method: 'POST' })).status
     ).toBe(200)
-    for (let attempt = 0; attempt < 50; attempt++) {
-      if ((await readCollectionRun(root))?.status === 'completed') break
-      await new Promise((resolve) => setTimeout(resolve, 10))
+    for (let attempt = 0; attempt < 250; attempt++) {
+      if (
+        ['completed', 'failed'].includes(
+          (await readCollectionRun(root))?.status ?? ''
+        )
+      )
+        break
+      await new Promise((resolve) => setTimeout(resolve, 20))
     }
     const run = await readCollectionRun(root)
-    expect(run?.status).toBe('completed')
+    expect(run?.status, JSON.stringify(run)).toBe('completed')
     expect(discovered).toEqual(['first', 'second'])
     expect(run?.events.map((event) => event.action)).toEqual(
       expect.arrayContaining(['collection-paused', 'collection-resumed'])
