@@ -29,7 +29,14 @@ function parseSecretFile(contents: string): Map<string, string> {
     if (separator < 1) continue
     const name = line.slice(0, separator).trim()
     const rawValue = line.slice(separator + 1).trim()
-    const value = rawValue.replace(/^(?:"(.*)"|'(.*)')$/u, '$1$2')
+    let value = rawValue.replace(/^(?:"(.*)"|'(.*)')$/u, '$1$2')
+    if (rawValue.startsWith('"') && rawValue.endsWith('"')) {
+      try {
+        value = JSON.parse(rawValue) as string
+      } catch {
+        // Keep hand-written .env values with unescaped backslashes readable.
+      }
+    }
     entries.set(name, value)
   }
   return entries
@@ -73,7 +80,7 @@ export async function updateFileSecret(
   const replacement = value ? `${name}=${JSON.stringify(value)}\n` : ''
   const pattern = new RegExp(`^${name}=.*(?:\\r?\\n|$)`, 'mu')
   const updated = pattern.test(contents)
-    ? contents.replace(pattern, replacement)
+    ? contents.replace(pattern, () => replacement)
     : `${contents}${contents && !contents.endsWith('\n') ? '\n' : ''}${replacement}`
   await mkdir(path.dirname(filePath), { recursive: true })
   const temporary = `${filePath}.${randomUUID()}.tmp`
