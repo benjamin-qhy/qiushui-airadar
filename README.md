@@ -21,7 +21,7 @@ pnpm release:local # 生成 release/ 下的安装包和校验文件
 pnpm release:remote # 将已提交并推送的版本发布到 GitHub Releases
 ```
 
-安装包启动当前单表服务：`qiushui-airadar.sqlite` 保存内容目录、状态和分析字段；Markdown 保存正文和执行日志；YAML 保存配置。密钥保存在数据目录的 `.env`，不随程序发布。手动采集使用 `qiushui-airadar collect`，远程升级使用 `qiushui-airadar upgrade`，当前服务尚未启用定时采集。
+安装包启动当前单表服务：`qiushui-airadar.sqlite` 保存内容目录、状态和分析字段；Markdown 保存正文和执行日志；YAML 保存配置。密钥保存在数据目录的 `.env`，不随程序发布。手动采集使用 `qiushui-airadar collect`，远程升级使用 `qiushui-airadar upgrade`，正式服务支持定时采集，默认每天北京时间 04:00 执行所有启用信源；同一分钟只触发一次，重启不会重复触发。
 
 ## 工程目录
 

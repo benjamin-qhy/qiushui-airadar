@@ -51,6 +51,7 @@ import {
   type CollectionControl,
 } from './collect-single-table.js'
 import { readCollectionRun } from './collection-run.js'
+import { createCollectionScheduler } from './collection-scheduler.js'
 
 const scoreNames = {
   interest_fit: 'interestFit',
@@ -469,6 +470,7 @@ export function createSingleTableServiceApp(options: {
   secretFile?: string
   promptsRoot?: string
   webRoot?: string
+  scheduleCollections?: boolean
   gateway?: SingleTableModelGateway
   modelConnectionTest?: (
     providerId: string,
@@ -479,6 +481,7 @@ export function createSingleTableServiceApp(options: {
 }) {
   let repository: SingleTableRepository | undefined
   let server: Server | undefined
+  let scheduler: ReturnType<typeof createCollectionScheduler> | undefined
   const retrying = new Set<string>()
   const translating = new Set<string>()
   const translationTasks = new Set<Promise<unknown>>()
@@ -1126,7 +1129,7 @@ export function createSingleTableServiceApp(options: {
               schedule: {
                 expression: config.runtime.collection.schedule,
                 timezone: config.runtime.timezone,
-                active: false,
+                ...(scheduler?.status() ?? { active: false }),
               },
             })
           }
@@ -2285,9 +2288,41 @@ export function createSingleTableServiceApp(options: {
       const bound = server.address()
       if (!bound || typeof bound === 'string')
         throw new Error('Invalid listen address')
+      if (options.scheduleCollections) {
+        scheduler = createCollectionScheduler({
+          stateFile: path.join(options.dataRoot, 'collection-schedule.json'),
+          async readPlan() {
+            const config = await loadSingleTableConfig(options.configRoot)
+            return {
+              expression: config.runtime.collection.schedule,
+              timezone: config.runtime.timezone,
+            }
+          },
+          async trigger() {
+            const host = address.host === '::1' ? '[::1]' : '127.0.0.1'
+            const response = await fetch(
+              `http://${host}:${bound.port}/api/collection/start`,
+              {
+                method: 'POST',
+                headers: { 'content-type': 'application/json' },
+                body: '{}',
+                signal: AbortSignal.timeout(90_000),
+              }
+            )
+            const result = (await response.json()) as { message?: string }
+            return {
+              accepted: response.status === 202,
+              message: result.message ?? `HTTP ${response.status}`,
+            }
+          },
+        })
+        scheduler.start()
+      }
       return { host: address.host, port: bound.port }
     },
     async stop() {
+      await scheduler?.stop()
+      scheduler = undefined
       logins.stop()
       if ((await readCollectionRun(options.dataRoot))?.status === 'paused')
         collectionControl?.interrupt()

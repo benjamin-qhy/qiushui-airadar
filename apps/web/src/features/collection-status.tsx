@@ -183,15 +183,34 @@ export function CollectionStatus({ initial }: { initial: CollectionData }) {
       <section className='border-t pt-5'>
         <h2 className='font-semibold'>自动执行</h2>
         <p className='mt-2 text-sm'>
-          当前服务尚未启用定时调度，请使用“手工采集”。
+          {data.schedule?.active
+            ? '定时采集已启用，将自动执行所有已启用信源。'
+            : '当前服务尚未启用定时调度，请使用“手工采集”。'}
         </p>
         <p className='mt-1 text-sm text-muted-foreground'>
-          已保存计划：
-          {data.schedule?.expression === '0 8 * * *'
-            ? '每天北京时间 08:00'
+          执行计划：
+          {data.schedule?.timezone === 'Asia/Shanghai' &&
+          /^\d+ \d+ \* \* \*$/u.test(data.schedule.expression)
+            ? `每天北京时间 ${data.schedule.expression.split(' ')[1]!.padStart(2, '0')}:${data.schedule.expression.split(' ')[0]!.padStart(2, '0')}`
             : (data.schedule?.expression ?? '未配置')}
-          。保存计划不代表任务已经自动运行。
+          。请保持电脑和服务运行。
         </p>
+        {data.schedule?.error && (
+          <p role='alert' className='mt-2 text-sm text-destructive'>
+            {data.schedule.error}
+          </p>
+        )}
+        {data.schedule?.lastAttempt && (
+          <p className='mt-2 text-sm'>
+            上次定时启动：
+            {data.schedule.lastAttempt.status === 'started'
+              ? '已启动'
+              : data.schedule.lastAttempt.status === 'starting'
+                ? '正在启动'
+                : '启动失败'}
+            。{data.schedule.lastAttempt.message}
+          </p>
+        )}
       </section>
       {run && (
         <section className='border-t pt-5'>
