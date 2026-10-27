@@ -8,7 +8,7 @@ import {
   sourceTypeSchema,
   type Source,
   type SourceType,
-} from '@qiushuiai-airadar/domain'
+} from '@qiushui-airadar/domain'
 import { z } from 'zod'
 
 export * from './single-table.js'
@@ -498,8 +498,8 @@ export interface DiscoveryCommitHooks {
   beforeProgress?(): void | Promise<void>
 }
 
-const markdownStart = '<!-- qiushuiai-airadar-record:start -->\n```json\n'
-const markdownEnd = '\n```\n<!-- qiushuiai-airadar-record:end -->\n'
+const markdownStart = '<!-- qiushui-airadar-record:start -->\n```json\n'
+const markdownEnd = '\n```\n<!-- qiushui-airadar-record:end -->\n'
 const sensitiveKey =
   /(?:apikey|accesskey(?:id)?|token|secret|password|passphrase|authorization|auth|cookie|privatekey|credentials?|bearer|signingkey|decodekey)$/iu
 const secretReferenceSchema = z
@@ -511,14 +511,14 @@ function nowIso(): string {
 }
 
 function recordMarkdown(kind: string, record: unknown): string {
-  return `# qiushuiai-airadar ${kind}\n\n${markdownStart}${JSON.stringify(record, null, 2)}${markdownEnd}`
+  return `# qiushui-airadar ${kind}\n\n${markdownStart}${JSON.stringify(record, null, 2)}${markdownEnd}`
 }
 
 function parseRecord<T>(source: string, schema: z.ZodType<T>): T {
   const start = source.indexOf(markdownStart)
   const end = source.indexOf(markdownEnd, start + markdownStart.length)
   if (start < 0 || end < 0)
-    throw new Error('Invalid qiushuiai-airadar Markdown record')
+    throw new Error('Invalid qiushui-airadar Markdown record')
   return schema.parse(
     JSON.parse(source.slice(start + markdownStart.length, end)) as unknown
   )
@@ -653,7 +653,7 @@ async function acquireRootLock(indexDirectory: string): Promise<RootLock> {
     return { database }
   } catch (error) {
     database.close()
-    throw new Error('qiushuiai-airadar data root is already in use', {
+    throw new Error('qiushui-airadar data root is already in use', {
       cause: error,
     })
   }

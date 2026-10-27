@@ -9,7 +9,7 @@ import {
   taskSchema,
 } from './index.js'
 
-describe('qiushuiai-airadar domain contracts', () => {
+describe('qiushui-airadar domain contracts', () => {
   it('accepts one connected set of versioned records', () => {
     const source = sourceSchema.parse({
       id: 'source-openai-rss',

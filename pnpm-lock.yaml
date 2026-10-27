@@ -61,28 +61,28 @@ importers:
         specifier: 0.85.1
         version: 0.85.1(ws@8.21.3)(zod@4.1.12)
     devDependencies:
-      '@qiushuiai-airadar/config':
+      '@qiushui-airadar/config':
         specifier: workspace:*
         version: link:../../packages/config
-      '@qiushuiai-airadar/service':
+      '@qiushui-airadar/service':
         specifier: workspace:*
         version: link:../service
-      '@qiushuiai-airadar/web':
+      '@qiushui-airadar/web':
         specifier: workspace:*
         version: link:../web
 
   apps/service:
     dependencies:
-      '@qiushuiai-airadar/config':
+      '@qiushui-airadar/config':
         specifier: workspace:*
         version: link:../../packages/config
-      '@qiushuiai-airadar/pipeline':
+      '@qiushui-airadar/pipeline':
         specifier: workspace:*
         version: link:../../packages/pipeline
-      '@qiushuiai-airadar/runtime':
+      '@qiushui-airadar/runtime':
         specifier: workspace:*
         version: link:../../packages/runtime
-      '@qiushuiai-airadar/source-adapters':
+      '@qiushui-airadar/source-adapters':
         specifier: workspace:*
         version: link:../../packages/source-adapters
 
@@ -221,13 +221,13 @@ importers:
       '@mozilla/readability':
         specifier: 0.6.0
         version: 0.6.0
-      '@qiushuiai-airadar/domain':
+      '@qiushui-airadar/domain':
         specifier: workspace:*
         version: link:../domain
-      '@qiushuiai-airadar/runtime':
+      '@qiushui-airadar/runtime':
         specifier: workspace:*
         version: link:../runtime
-      '@qiushuiai-airadar/source-adapters':
+      '@qiushui-airadar/source-adapters':
         specifier: workspace:*
         version: link:../source-adapters
       fast-xml-parser:
@@ -245,7 +245,7 @@ importers:
 
   packages/runtime:
     dependencies:
-      '@qiushuiai-airadar/domain':
+      '@qiushui-airadar/domain':
         specifier: workspace:*
         version: link:../domain
       yaml:
@@ -257,7 +257,7 @@ importers:
 
   packages/source-adapters:
     dependencies:
-      '@qiushuiai-airadar/domain':
+      '@qiushui-airadar/domain':
         specifier: workspace:*
         version: link:../domain
 

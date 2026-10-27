@@ -1,5 +1,5 @@
 {
-  "name": "@qiushuiai-airadar/runtime",
+  "name": "@qiushui-airadar/runtime",
   "private": true,
   "version": "0.1.0",
   "type": "module",
@@ -19,7 +19,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
-    "@qiushuiai-airadar/domain": "workspace:*",
+    "@qiushui-airadar/domain": "workspace:*",
     "yaml": "^2.9.1",
     "zod": "^4.1.12"
   }

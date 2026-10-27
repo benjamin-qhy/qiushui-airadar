@@ -14,8 +14,8 @@ $previousSource = Join-Path $acceptRoot 'previous-release'
 New-Item -ItemType Directory -Force -Path $packRoot, $dataRoot, $previousSource | Out-Null
 Set-Content -Path $secretFile -Value '' -NoNewline
 
-$env:QIUSHUIAI_AIRADAR_DATA_ROOT = $dataRoot
-$env:QIUSHUIAI_AIRADAR_SECRET_FILE = $secretFile
+$env:QIUSHUI_AIRADAR_DATA_ROOT = $dataRoot
+$env:QIUSHUI_AIRADAR_SECRET_FILE = $secretFile
 $serviceName = 'QiushuiAIAIRadar'
 $port = 43110
 
@@ -72,14 +72,14 @@ if ((Get-ChildItem -Path (Join-Path $dataRoot 'sources') -File).Count -lt 36) {
 $marker = Join-Path $dataRoot 'upgrade-preservation.md'
 Set-Content -Path $marker -Value '# must survive program upgrade'
 
-pnpm --filter '@qiushuiai-airadar/cli' pack --pack-destination $packRoot | Out-Host
+pnpm --filter '@qiushui-airadar/cli' pack --pack-destination $packRoot | Out-Host
 $tarball = Get-ChildItem -Path $packRoot -Filter '*-0.1.0.tgz' | Select-Object -First 1
 if (-not $tarball) { throw 'CLI package tarball was not produced' }
 npm install --prefix $installRoot --ignore-scripts $tarball.FullName | Out-Host
 if ((Get-Content -Raw $marker).Trim() -ne '# must survive program upgrade') {
   throw 'Old-to-new program upgrade changed business data'
 }
-$cliPath = Join-Path $installRoot 'node_modules/@qiushuiai-airadar/cli/dist/cli.js'
+$cliPath = Join-Path $installRoot 'node_modules/@qiushui-airadar/cli/dist/cli.js'
 
 try {
   node $cliPath service install --host 127.0.0.1 --port $port | Out-Host

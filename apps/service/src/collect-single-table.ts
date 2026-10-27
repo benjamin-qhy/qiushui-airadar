@@ -6,13 +6,13 @@ import {
   loadSingleTableConfig,
   loadSourceState,
   saveSourceState,
-} from '@qiushuiai-airadar/config'
+} from '@qiushui-airadar/config'
 import {
   collectSourcesSerially,
   createFileModelCredentialStore,
   createSingleTableModelGateway,
-} from '@qiushuiai-airadar/pipeline'
-import { SingleTableRepository } from '@qiushuiai-airadar/runtime'
+} from '@qiushui-airadar/pipeline'
+import { SingleTableRepository } from '@qiushui-airadar/runtime'
 import { createSingleTableSourceProvider } from './single-table-provider.js'
 import {
   checkXVideoTranscription,
@@ -79,8 +79,8 @@ export async function collectSingleTable(options: {
   promptsRoot: string
   secretFile?: string
   repository?: SingleTableRepository
-  gateway?: import('@qiushuiai-airadar/pipeline').SingleTableModelGateway
-  provider?: import('@qiushuiai-airadar/pipeline').SingleTableSourceProvider
+  gateway?: import('@qiushui-airadar/pipeline').SingleTableModelGateway
+  provider?: import('@qiushui-airadar/pipeline').SingleTableSourceProvider
   onStarted?: () => void
   control?: CollectionControl
   resume?: boolean

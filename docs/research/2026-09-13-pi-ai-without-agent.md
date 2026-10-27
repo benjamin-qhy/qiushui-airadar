@@ -2,11 +2,11 @@
 
 > 日期：2026-09-13
 >
-> 目标：确认 qiushuiai-airadar 能否只使用 Pi 的统一多模型能力，而不引入 Pi Agent 或 Skill 运行时。
+> 目标：确认 qiushui-airadar 能否只使用 Pi 的统一多模型能力，而不引入 Pi Agent 或 Skill 运行时。
 
 ## 结论
 
-**可以，而且适合 qiushuiai-airadar 当前阶段。**
+**可以，而且适合 qiushui-airadar 当前阶段。**
 
 只安装和使用 `@earendil-works/pi-ai` 即可统一调用多家模型；不需要安装 `@earendil-works/pi-agent-core`，也不需要启动 Agent 循环或加载 Skill。Pi 官方仓库本身把两者发布为独立包：`pi-ai` 是统一多供应商 LLM 接口，`pi-agent-core` 是建立在 `pi-ai` 之上的 Agent 运行时。
 
@@ -32,7 +32,7 @@ npm install @earendil-works/pi-ai
 
 `pi-ai` 提供 `createModels()`、`models.stream()`、`models.complete()` 和简化版 `completeSimple()`。应用自行选定供应商和模型后，可以直接完成一次请求，不需要创建 Agent。[官方 Quick Start](https://github.com/earendil-works/pi/blob/main/packages/ai/README.md#quick-start)；[统一调用接口](https://github.com/earendil-works/pi/blob/main/packages/ai/README.md#unified-interface-streamsimplecompletesimple)
 
-这与 qiushuiai-airadar 的高频任务吻合：程序固定传入一条内容和一个版本化任务说明，模型返回结果，TypeScript 校验并保存。
+这与 qiushui-airadar 的高频任务吻合：程序固定传入一条内容和一个版本化任务说明，模型返回结果，TypeScript 校验并保存。
 
 ### 3. 已覆盖大量供应商，也支持兼容接口
 
@@ -46,18 +46,18 @@ npm install @earendil-works/pi-ai
 
 每个 Pi provider 负责自己的模型目录和认证解析；应用可以注入 `CredentialStore` 保存凭证，也可以通过环境变量或调用参数提供密钥。[Provider 与模型](https://github.com/earendil-works/pi/blob/main/packages/ai/README.md#providers-and-models)；[Credential Store](https://github.com/earendil-works/pi/blob/main/packages/ai/README.md#credential-store)
 
-返回消息包含统一的输入、输出 Token 和费用数据，可直接用于 qiushuiai-airadar 的调用审计、每日预算和供应商对比。[Quick Start 中的 usage/cost](https://github.com/earendil-works/pi/blob/main/packages/ai/README.md#quick-start)
+返回消息包含统一的输入、输出 Token 和费用数据，可直接用于 qiushui-airadar 的调用审计、每日预算和供应商对比。[Quick Start 中的 usage/cost](https://github.com/earendil-works/pi/blob/main/packages/ai/README.md#quick-start)
 
 ### 5. 结构化结果不需要 Agent
 
 `pi-ai` 支持 TypeBox 工具参数 schema，并提供 `validateToolCall()` 做运行时校验。[工具定义](https://github.com/earendil-works/pi/blob/main/packages/ai/README.md#defining-tools)；[参数校验](https://github.com/earendil-works/pi/blob/main/packages/ai/README.md#validating-tool-arguments)
 
-qiushuiai-airadar 可以把“提交分析结果”定义成一个**不执行外部动作**的结构化输出工具，让模型一次返回分类、摘要、分项分和理由；程序只读取并校验参数，不进入 Agent 工具循环。也可以要求模型输出 JSON 后再用项目 schema 校验，但前一种方式对不同供应商更统一。
+qiushui-airadar 可以把“提交分析结果”定义成一个**不执行外部动作**的结构化输出工具，让模型一次返回分类、摘要、分项分和理由；程序只读取并校验参数，不进入 Agent 工具循环。也可以要求模型输出 JSON 后再用项目 schema 校验，但前一种方式对不同供应商更统一。
 
 ## 推荐接入方式
 
 ```text
-qiushuiai-airadar Worker
+qiushui-airadar Worker
       |
       v
 ModelGateway（项目自己的小接口）
@@ -89,11 +89,11 @@ ModelGateway（项目自己的小接口）
 - Skill 加载；
 - 模型自行决定下一步行动。
 
-这些能力当前都不是 qiushuiai-airadar 的需要。系统处理步骤、重试、去重、状态变化和副作用已经明确应由 TypeScript 控制，因此去掉 Agent 反而更简单、更快、更省 Token。
+这些能力当前都不是 qiushui-airadar 的需要。系统处理步骤、重试、去重、状态变化和副作用已经明确应由 TypeScript 控制，因此去掉 Agent 反而更简单、更快、更省 Token。
 
 ## `pi-ai` 也不会替项目完成什么
 
-以下仍由 qiushuiai-airadar 自己负责：
+以下仍由 qiushui-airadar 自己负责：
 
 - 持久化任务队列、幂等、跨进程恢复和业务重试；
 - 按项目规则进行多模型排序、故障切换和预算熔断；
@@ -112,7 +112,7 @@ ModelGateway（项目自己的小接口）
 
 ## 最终建议
 
-qiushuiai-airadar 本期采用：
+qiushui-airadar 本期采用：
 
 - **使用**：`@earendil-works/pi-ai`；
 - **不使用**：`@earendil-works/pi-agent-core`、`@earendil-works/pi-coding-agent`、运行时 Skill；

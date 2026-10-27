@@ -1,4 +1,12 @@
-import { mkdtemp, readFile, rm, stat } from 'node:fs/promises'
+import {
+  mkdtemp,
+  mkdir,
+  readdir,
+  readFile,
+  rm,
+  stat,
+  writeFile,
+} from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 
@@ -8,7 +16,7 @@ import {
   SingleTableRepository,
   type OriginalContent,
   type ScoringRules,
-} from '@qiushuiai-airadar/runtime'
+} from '@qiushui-airadar/runtime'
 
 import {
   createSingleTableCodexGateway,
@@ -54,12 +62,25 @@ const original: OriginalContent = {
 async function fixture(
   outputs: Record<string, string>,
   minimum = 60,
-  content = original
+  content = original,
+  windowsLineEndings = false
 ) {
-  const root = await mkdtemp(path.join(tmpdir(), 'qiushuiai-airadar-flow-'))
+  const root = await mkdtemp(path.join(tmpdir(), 'qiushui-airadar-flow-'))
   roots.push(root)
   const repository = await SingleTableRepository.open(root)
   repositories.push(repository)
+  let promptDirectory = promptsRoot
+  if (windowsLineEndings) {
+    promptDirectory = path.join(root, 'prompts')
+    await mkdir(promptDirectory)
+    for (const file of await readdir(promptsRoot))
+      await writeFile(
+        path.join(promptDirectory, file),
+        (await readFile(path.join(promptsRoot, file), 'utf8'))
+          .replaceAll('\r\n', '\n')
+          .replaceAll('\n', '\r\n')
+      )
+  }
   const calls: Array<{ stage: string; user: string }> = []
   const gateway: SingleTableModelGateway = {
     async complete(input) {
@@ -75,7 +96,7 @@ async function fixture(
   const result = await processSingleTableContent({
     repository,
     gateway,
-    promptsRoot,
+    promptsRoot: promptDirectory,
     original: content,
     profile: {
       interests: ['AI Agent'],
@@ -160,6 +181,19 @@ describe('single-table AI flow', () => {
     expect(calls.map((call) => call.stage)).toEqual(['classify'])
     expect(result.total_score).toBeNull()
     expect(result.chinese_markdown_path).toBeNull()
+  })
+
+  it('reads prompt sections from Windows CRLF Markdown files', async () => {
+    const { calls } = await fixture(
+      {
+        classify:
+          '---\nkeywords: ["广告"]\nspam:\n  isJunk: true\n  reason: "纯广告"\n---',
+      },
+      60,
+      original,
+      true
+    )
+    expect(calls.map((call) => call.stage)).toEqual(['classify'])
   })
 
   it('accepts empty keywords and summary when a long item is junk', async () => {

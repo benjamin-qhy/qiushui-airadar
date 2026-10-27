@@ -11,7 +11,7 @@ import {
 describe('local secret boundary', () => {
   it('keeps raw values behind the backend reader and exposes only masked status', async () => {
     const directory = await mkdtemp(
-      join(tmpdir(), 'qiushuiai-airadar-secrets-')
+      join(tmpdir(), 'qiushui-airadar-secrets-')
     )
     const file = join(directory, '.env')
     await writeFile(file, 'TIKHUB_TOKEN=super-secret-value\nEMPTY=\n', {
@@ -41,7 +41,7 @@ describe('local secret boundary', () => {
     'rejects secret files readable by other users on macOS',
     async () => {
       const directory = await mkdtemp(
-        join(tmpdir(), 'qiushuiai-airadar-secrets-')
+        join(tmpdir(), 'qiushui-airadar-secrets-')
       )
       const file = join(directory, '.env')
       await writeFile(file, 'TOKEN=value\n', { mode: 0o644 })
@@ -54,7 +54,7 @@ describe('local secret boundary', () => {
 
   it('updates one credential without exposing or replacing the others', async () => {
     const directory = await mkdtemp(
-      join(tmpdir(), 'qiushuiai-airadar-secrets-')
+      join(tmpdir(), 'qiushui-airadar-secrets-')
     )
     const file = join(directory, '.env')
     await writeFile(file, '# local\nFIRST=keep\nTOKEN=old\n', { mode: 0o600 })

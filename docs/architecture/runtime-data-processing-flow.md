@@ -1,8 +1,8 @@
-# qiushuiai-airadar 运行架构与完整处理流程
+# qiushui-airadar 运行架构与完整处理流程
 
 > 本文依据 2026-09-16 的当前代码编写，描述的是“现在实际怎样运行”，不是未来设想。
 >
-> 一句话理解：qiushuiai-airadar 像一条内容加工流水线——先去各个平台找新内容，再补齐正文、字幕或图文附件，最后交给 AI 做摘要和评分，合格内容才进入每日内容流。
+> 一句话理解：qiushui-airadar 像一条内容加工流水线——先去各个平台找新内容，再补齐正文、字幕或图文附件，最后交给 AI 做摘要和评分，合格内容才进入每日内容流。
 
 ## 1. 先看懂整套系统
 
@@ -302,12 +302,12 @@ flowchart TB
     IDX --> SERVICE
 ```
 
-默认数据根目录是 `~/.qiushuiai-airadar/development-data`：
+默认数据根目录是 `~/.qiushui-airadar/development-data`：
 
 - Markdown：正式、可阅读、可重建的业务证据。
 - `.index/runtime.sqlite`：页面查询和任务领取的加速索引，不是唯一真相。
 - `.raw-responses`：已脱敏的供应商和模型原始返回，默认 30 天后清理。
-- `~/.qiushuiai-airadar/development-data/.env`：密钥文件，与业务数据分开。
+- `~/.qiushui-airadar/development-data/.env`：密钥文件，与业务数据分开。
 
 ## 7. 当前代码已经实现的范围
 
@@ -330,7 +330,7 @@ flowchart TB
 2. **页面“试抓”不是正式采集。** 它最多预览 3 条，只验证连接和样品，不保存内容，也不推进采集进度。正式完整采集目前依赖定时计划。
 3. **非 RSS 的采集审计还不完整。** 平台采集会保存每次供应商尝试、供应商健康和进度，但当前没有像 RSS 那样写入统一的“采集运行审计”。信源页面又主要根据统一审计判断健康，因此非 RSS 的健康展示可能缺少完整依据。
 4. **“不可用信源”只体现在页面计算。** 页面会把连续 3 次采集失败显示为不可用，但当前代码不会自动把信源状态改为停用或归档。
-5. **自动转写依赖外部服务。** 除已接入的抖音 Get笔记路径外，其他无字幕视频需要配置 `QIUSHUIAI_AIRADAR_TRANSCRIBER_URL`，否则会等待人工处理或失败。
+5. **自动转写依赖外部服务。** 除已接入的抖音 Get笔记路径外，其他无字幕视频需要配置 `QIUSHUI_AIRADAR_TRANSCRIBER_URL`，否则会等待人工处理或失败。
 6. **分析模型路线目前写死。** 正式服务固定使用 `gpt-5.6-terra`；配置页可以调整画像和评分，但不能切换模型路线。
 7. **没有独立投递队列。** “进入每日流”是查询时筛选，不是一个可单独追踪和重试的投递步骤。
 8. **另有一个 RSS 一次性流水线函数。** `runRssPipeline()` 主要被测试和验收脚本使用；正式后台服务走的是“发现任务 → 补全任务 → 分析任务”，两者不要混为一套生产流程。
@@ -412,10 +412,10 @@ flowchart TB
 
 ### 一条内容在磁盘上的样子
 
-默认根目录是 `~/.qiushuiai-airadar/development-data/`；若启动时指定 `QIUSHUIAI_AIRADAR_DATA_ROOT`，则以指定目录为准。下面用假设的内容 ID `x:123456` 举例。`<SHA-256(...)>` 表示按括号中的完整 ID 计算出的文件名，不是字面文件名。不同记录的 ID 不同，因此哈希文件名也不同。
+默认根目录是 `~/.qiushui-airadar/development-data/`；若启动时指定 `QIUSHUI_AIRADAR_DATA_ROOT`，则以指定目录为准。下面用假设的内容 ID `x:123456` 举例。`<SHA-256(...)>` 表示按括号中的完整 ID 计算出的文件名，不是字面文件名。不同记录的 ID 不同，因此哈希文件名也不同。
 
 ```text
-~/.qiushuiai-airadar/development-data/
+~/.qiushui-airadar/development-data/
 ├── .index/
 │   ├── runtime.sqlite                 # 上表 16 张表所在的可重建查询索引
 │   └── runtime-lock.sqlite            # 防止两个服务同时占用同一数据目录

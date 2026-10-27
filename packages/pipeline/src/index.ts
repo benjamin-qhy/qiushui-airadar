@@ -27,11 +27,11 @@ export * from './document-translation.js'
 export * from './model-credential-store.js'
 export * from './provider-login.js'
 
-import { canonicalizeContentUrl, type Source } from '@qiushuiai-airadar/domain'
+import { canonicalizeContentUrl, type Source } from '@qiushui-airadar/domain'
 import type {
   AnalysisRecord,
   RuntimeRepository,
-} from '@qiushuiai-airadar/runtime'
+} from '@qiushui-airadar/runtime'
 import {
   classifyNonArticlePage,
   decideVideoEnrichment,
@@ -42,7 +42,7 @@ import {
   type DiscoveryRequest,
   type VideoTranscriptProvider,
   type VideoTranscriber,
-} from '@qiushuiai-airadar/source-adapters'
+} from '@qiushui-airadar/source-adapters'
 
 type Fetcher = typeof globalThis.fetch
 

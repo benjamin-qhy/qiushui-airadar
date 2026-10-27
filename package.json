@@ -1,7 +1,7 @@
 {
-  "name": "qiushuiai-airadar",
+  "name": "qiushui-airadar",
   "private": true,
-  "version": "0.7.10",
+  "version": "0.8.0",
   "type": "module",
   "packageManager": "pnpm@10.34.1",
   "engines": {
@@ -17,7 +17,7 @@
     "accept:x-youtube": "tsx scripts/accept-x-youtube-e2e.ts",
     "check": "pnpm lint && pnpm typecheck && pnpm test && pnpm build && pnpm smoke:source && pnpm smoke:built && pnpm smoke:deployed",
     "dev": "node scripts/use-installed-service.mjs",
-    "dev:cli": "pnpm --filter @qiushuiai-airadar/cli dev",
+    "dev:cli": "pnpm --filter @qiushui-airadar/cli dev",
     "dev:service": "node scripts/use-installed-service.mjs",
     "lint": "eslint .",
     "smoke:source": "tsx scripts/source-smoke.ts",

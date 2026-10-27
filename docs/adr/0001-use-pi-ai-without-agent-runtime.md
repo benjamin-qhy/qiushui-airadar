@@ -4,7 +4,7 @@ status: accepted
 
 # 只使用 Pi AI 作为多模型接入层
 
-qiushuiai-airadar 使用 `@earendil-works/pi-ai` 统一接入多家大模型，但不引入 Pi Agent、Coding Agent 或运行时 Skill。采集、补全、任务状态、重试、审计、总分、推荐分级和所有副作用均由确定性 TypeScript 流水线负责；这样既避免分别维护厂商 SDK，也不会为固定批处理承担 Agent 循环的额外 Token、延迟和不确定性。
+qiushui-airadar 使用 `@earendil-works/pi-ai` 统一接入多家大模型，但不引入 Pi Agent、Coding Agent 或运行时 Skill。采集、补全、任务状态、重试、审计、总分、推荐分级和所有副作用均由确定性 TypeScript 流水线负责；这样既避免分别维护厂商 SDK，也不会为固定批处理承担 Agent 循环的额外 Token、延迟和不确定性。
 
 一条普通内容通过一次结构化模型调用同时生成摘要、主题、综合价值各分项和 AI 垃圾判断；超长内容先按结构确定性切分，各段只提取事实，再进行一次最终综合分析。模型返回语义判断，TypeScript 校验结果并计算唯一的综合价值分；完整内容不跨条批量分析，也不直接截断。AI 垃圾判断无需人工确认即可生效，但必须记录来源，且之后的人工修改拥有最终优先级。
 

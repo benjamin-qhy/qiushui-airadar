@@ -11,7 +11,7 @@ const directory = path.join(root, 'release')
 await mkdir(directory, { recursive: true })
 const file = path.join(
   directory,
-  `qiushuiai-airadar-cli-${manifest.version}.tgz`
+  `qiushui-airadar-cli-${manifest.version}.tgz`
 )
 try {
   await access(file)
@@ -26,7 +26,7 @@ execFileSync(
   [
     process.env.npm_execpath,
     '--filter',
-    '@qiushuiai-airadar/cli',
+    '@qiushui-airadar/cli',
     'pack',
     '--pack-destination',
     directory,
@@ -38,7 +38,7 @@ const hash = createHash('sha256')
   .digest('hex')
 await writeFile(`${file}.sha256`, `${hash}  ${path.basename(file)}\n`)
 await writeFile(
-  path.join(directory, 'qiushuiai-airadar-release.json'),
+  path.join(directory, 'qiushui-airadar-release.json'),
   `${JSON.stringify(
     {
       version: manifest.version,

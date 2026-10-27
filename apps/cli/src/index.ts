@@ -2,13 +2,13 @@ import {
   initializeSingleTableConfig,
   loadSingleTableConfig,
   type SecretStatusReader,
-} from '@qiushuiai-airadar/config'
+} from '@qiushui-airadar/config'
 import path from 'node:path'
 import { readFile } from 'node:fs/promises'
 import {
   createSingleTableServiceApp,
   collectSingleTable,
-} from '@qiushuiai-airadar/service'
+} from '@qiushui-airadar/service'
 import { fileURLToPath } from 'node:url'
 import {
   createSystemServiceManager,
@@ -37,15 +37,15 @@ const version = JSON.parse(
   await readFile(path.join(packageRoot, 'package.json'), 'utf8')
 ).version as string
 
-const help = `qiushuiai-airadar command line
+const help = `qiushui-airadar command line
 
 Usage:
-  qiushuiai-airadar status
-  qiushuiai-airadar collect
-  qiushuiai-airadar upgrade [--force]
-  qiushuiai-airadar secrets status <NAME>
-  qiushuiai-airadar service run [--host <HOST>] [--port <PORT>]
-  qiushuiai-airadar service <install|start|stop|restart|status|uninstall> [--host <HOST>] [--port <PORT>]
+  qiushui-airadar status
+  qiushui-airadar collect
+  qiushui-airadar upgrade [--force]
+  qiushui-airadar secrets status <NAME>
+  qiushui-airadar service run [--host <HOST>] [--port <PORT>]
+  qiushui-airadar service <install|start|stop|restart|status|uninstall> [--host <HOST>] [--port <PORT>]
 `
 
 function writeJson(output: Output, value: unknown): void {
@@ -67,7 +67,7 @@ export async function runCli(
   }
   if (command === 'status') {
     writeJson(dependencies.stdout, {
-      name: 'qiushuiai-airadar',
+      name: 'qiushui-airadar',
       status: 'ready',
       version,
     })
@@ -84,14 +84,14 @@ export async function runCli(
   }
   if (command === 'collect') {
     const dataRoot = path.resolve(
-      process.env.QIUSHUIAI_AIRADAR_DATA_ROOT ?? productionDataRoot()
+      process.env.QIUSHUI_AIRADAR_DATA_ROOT ?? productionDataRoot()
     )
     const results = await collectSingleTable({
       dataRoot,
       templateRoot: path.join(packageRoot, 'config'),
       promptsRoot: path.join(packageRoot, 'prompts'),
       secretFile:
-        process.env.QIUSHUIAI_AIRADAR_SECRET_FILE ??
+        process.env.QIUSHUI_AIRADAR_SECRET_FILE ??
         path.join(dataRoot, '.env'),
     })
     writeJson(dependencies.stdout, results)
@@ -119,7 +119,7 @@ export async function runCli(
   if (command === 'service') {
     const hostIndex = args.indexOf('--host')
     const portIndex = args.indexOf('--port')
-    const host = hostIndex >= 0 ? args[hostIndex + 1] : '127.0.0.1'
+    const host = hostIndex >= 0 ? args[hostIndex + 1] : '0.0.0.0'
     const portText = portIndex >= 0 ? args[portIndex + 1] : undefined
     const port = portText ? Number(portText) : 43120
     if (
@@ -160,7 +160,7 @@ export async function runCli(
       throw new Error(`Unknown service command: ${subcommand}`)
     }
     const dataRoot = path.resolve(
-      process.env.QIUSHUIAI_AIRADAR_DATA_ROOT ?? productionDataRoot()
+      process.env.QIUSHUI_AIRADAR_DATA_ROOT ?? productionDataRoot()
     )
     const configRoot = dependencies.prepareConfig
       ? await dependencies.prepareConfig(dataRoot)
@@ -175,13 +175,13 @@ export async function runCli(
       dataRoot,
       configRoot,
       secretFile:
-        process.env.QIUSHUIAI_AIRADAR_SECRET_FILE ??
+        process.env.QIUSHUI_AIRADAR_SECRET_FILE ??
         path.join(dataRoot, '.env'),
       promptsRoot: path.join(packageRoot, 'prompts'),
       webRoot: fileURLToPath(new URL('../web', import.meta.url)),
     }).start({ host, port })
     writeJson(dependencies.stdout, {
-      service: 'qiushuiai-airadar',
+      service: 'qiushui-airadar',
       status: 'ready',
       ...address,
     })

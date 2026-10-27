@@ -1,9 +1,9 @@
 {
-  "name": "@qiushuiai-airadar/web",
+  "name": "@qiushui-airadar/web",
   "private": true,
   "version": "0.1.0",
   "type": "module",
-  "qiushuiai-airadar": {
+  "qiushui-airadar": {
     "shadcnAdminBase": "satnaing/shadcn-admin@v2.2.1"
   },
   "scripts": {

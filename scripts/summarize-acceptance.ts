@@ -1,7 +1,7 @@
 import { RuntimeRepository } from '../packages/runtime/src/index.js'
 
-const dataRoot = process.env.QIUSHUIAI_AIRADAR_ACCEPT_ROOT
-if (!dataRoot) throw new Error('QIUSHUIAI_AIRADAR_ACCEPT_ROOT is required')
+const dataRoot = process.env.QIUSHUI_AIRADAR_ACCEPT_ROOT
+if (!dataRoot) throw new Error('QIUSHUI_AIRADAR_ACCEPT_ROOT is required')
 
 function counts<T>(
   values: T[],

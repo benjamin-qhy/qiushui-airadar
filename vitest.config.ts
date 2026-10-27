@@ -9,27 +9,27 @@ export default defineConfig({
   resolve: {
     alias: {
       '@': path.resolve(import.meta.dirname, 'apps/web/src'),
-      '@qiushuiai-airadar/config': path.resolve(
+      '@qiushui-airadar/config': path.resolve(
         import.meta.dirname,
         'packages/config/src/index.ts'
       ),
-      '@qiushuiai-airadar/domain': path.resolve(
+      '@qiushui-airadar/domain': path.resolve(
         import.meta.dirname,
         'packages/domain/src/index.ts'
       ),
-      '@qiushuiai-airadar/runtime': path.resolve(
+      '@qiushui-airadar/runtime': path.resolve(
         import.meta.dirname,
         'packages/runtime/src/index.ts'
       ),
-      '@qiushuiai-airadar/pipeline': path.resolve(
+      '@qiushui-airadar/pipeline': path.resolve(
         import.meta.dirname,
         'packages/pipeline/src/index.ts'
       ),
-      '@qiushuiai-airadar/service': path.resolve(
+      '@qiushui-airadar/service': path.resolve(
         import.meta.dirname,
         'apps/service/src/index.ts'
       ),
-      '@qiushuiai-airadar/source-adapters': path.resolve(
+      '@qiushui-airadar/source-adapters': path.resolve(
         import.meta.dirname,
         'packages/source-adapters/src/index.ts'
       ),

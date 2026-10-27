@@ -16,7 +16,7 @@ it('starts asynchronously via HTTP, prevents duplicate starts and reports final 
     release = resolve
   })
   const { initializeSingleTableConfig } =
-    await import('@qiushuiai-airadar/config')
+    await import('@qiushui-airadar/config')
   const configRoot = await initializeSingleTableConfig(
     path.resolve(import.meta.dirname, '../../../config'),
     root
@@ -83,7 +83,7 @@ it('pauses at a safe checkpoint and resumes the same collection', async () => {
   })
   const discovered: string[] = []
   const { initializeSingleTableConfig } =
-    await import('@qiushuiai-airadar/config')
+    await import('@qiushui-airadar/config')
   const configRoot = await initializeSingleTableConfig(
     path.resolve(import.meta.dirname, '../../../config'),
     root
@@ -169,7 +169,7 @@ it('persists progress, rejects overlapping runs and detects an exited owner', as
 it('continues an interrupted collection with its original run id', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'airadar-continued-run-'))
   const { initializeSingleTableConfig } =
-    await import('@qiushuiai-airadar/config')
+    await import('@qiushui-airadar/config')
   const configRoot = await initializeSingleTableConfig(
     path.resolve(import.meta.dirname, '../../../config'),
     root
@@ -217,7 +217,7 @@ it('continues an interrupted collection with its original run id', async () => {
 it('pauses the entire run when a model rejects authentication', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'airadar-model-pause-'))
   const { initializeSingleTableConfig } =
-    await import('@qiushuiai-airadar/config')
+    await import('@qiushui-airadar/config')
   const configRoot = await initializeSingleTableConfig(
     path.resolve(import.meta.dirname, '../../../config'),
     root
@@ -288,7 +288,7 @@ it('tracks real collector source completion and failures without stopping remain
   const root = await mkdtemp(path.join(tmpdir(), 'airadar-collection-'))
   try {
     const { initializeSingleTableConfig } =
-      await import('@qiushuiai-airadar/config')
+      await import('@qiushui-airadar/config')
     const config = await initializeSingleTableConfig(
       path.resolve(import.meta.dirname, '../../../config'),
       root

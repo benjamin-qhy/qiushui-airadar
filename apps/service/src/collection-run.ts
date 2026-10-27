@@ -8,7 +8,7 @@ import {
 } from 'node:fs/promises'
 import path from 'node:path'
 import { randomUUID } from 'node:crypto'
-import type { SourceRunResult } from '@qiushuiai-airadar/pipeline'
+import type { SourceRunResult } from '@qiushui-airadar/pipeline'
 
 export interface CollectionRun {
   id: string

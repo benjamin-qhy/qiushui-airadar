@@ -10,7 +10,7 @@ import {
 } from '@earendil-works/pi-ai'
 import { afterEach, describe, expect, it } from 'vitest'
 
-import { RuntimeRepository } from '@qiushuiai-airadar/runtime'
+import { RuntimeRepository } from '@qiushui-airadar/runtime'
 
 import {
   calculateRecommendation,
@@ -34,7 +34,7 @@ import {
 const roots: string[] = []
 
 async function repository(): Promise<RuntimeRepository> {
-  const root = await mkdtemp(path.join(tmpdir(), 'qiushuiai-airadar-pipeline-'))
+  const root = await mkdtemp(path.join(tmpdir(), 'qiushui-airadar-pipeline-'))
   roots.push(root)
   return RuntimeRepository.open(root)
 }
@@ -1618,7 +1618,7 @@ describe('RSS discovery and enrichment', () => {
 
 describe('analysis and end-to-end orchestration', () => {
   it('adapts Codex OAuth in memory without rewriting its auth file', async () => {
-    const root = await mkdtemp(path.join(tmpdir(), 'qiushuiai-airadar-auth-'))
+    const root = await mkdtemp(path.join(tmpdir(), 'qiushui-airadar-auth-'))
     roots.push(root)
     const authPath = path.join(root, 'auth.json')
     const payload = Buffer.from(

@@ -8,10 +8,10 @@ import {
   runRssPipeline,
 } from '../packages/pipeline/src/index.js'
 
-const dataRoot = process.env.QIUSHUIAI_AIRADAR_ACCEPTANCE_ROOT
+const dataRoot = process.env.QIUSHUI_AIRADAR_ACCEPTANCE_ROOT
 if (!dataRoot) {
   throw new Error(
-    'QIUSHUIAI_AIRADAR_ACCEPTANCE_ROOT must name an isolated test directory'
+    'QIUSHUI_AIRADAR_ACCEPTANCE_ROOT must name an isolated test directory'
   )
 }
 
@@ -39,7 +39,7 @@ try {
     limit: 1,
   })
   const manualResult =
-    process.env.QIUSHUIAI_AIRADAR_ACCEPTANCE_REANALYZE === '1' &&
+    process.env.QIUSHUI_AIRADAR_ACCEPTANCE_REANALYZE === '1' &&
     result.analyses[0]
       ? await runRssPipeline({
           repository,

@@ -22,7 +22,7 @@ import {
   type RuntimeTask,
   type UtilizationAction,
   validateRuntimeParameters,
-} from '@qiushuiai-airadar/runtime'
+} from '@qiushui-airadar/runtime'
 import {
   analyzeStoredContent,
   createCodexPiGateway,
@@ -33,7 +33,7 @@ import {
   enrichYouTubeContent,
   runPlatformDiscovery,
   runRssDiscovery,
-} from '@qiushuiai-airadar/pipeline'
+} from '@qiushui-airadar/pipeline'
 import {
   classifyNonArticlePage,
   createGetBijiDouyinProvider,
@@ -53,7 +53,7 @@ import {
   type CaptureProviderResponse,
   type SourceAdapter,
   type VideoTranscriber,
-} from '@qiushuiai-airadar/source-adapters'
+} from '@qiushui-airadar/source-adapters'
 
 import { initialSources, retiredSourceIds } from './source-seeds.js'
 
@@ -497,7 +497,7 @@ function allowLocalWebOrigin(origin: string | undefined): string | undefined {
   try {
     const url = new URL(origin)
     const configured = new Set(
-      (process.env.QIUSHUIAI_AIRADAR_WEB_ORIGINS ?? '')
+      (process.env.QIUSHUI_AIRADAR_WEB_ORIGINS ?? '')
         .split(',')
         .map((value) => value.trim())
         .filter(Boolean)
@@ -881,7 +881,7 @@ function configuredAdapter(
 }
 
 function configuredVideoTranscriber(): VideoTranscriber | undefined {
-  const endpoint = process.env.QIUSHUIAI_AIRADAR_TRANSCRIBER_URL
+  const endpoint = process.env.QIUSHUI_AIRADAR_TRANSCRIBER_URL
   if (!endpoint) return undefined
   const url = new URL(endpoint)
   if (url.protocol !== 'https:' && url.hostname !== '127.0.0.1') {
@@ -1081,7 +1081,7 @@ async function executeTask(
           : configuredVideoTranscriber()
       if (!transcriber) {
         throw new Error(
-          'Video transcriber is not configured; set QIUSHUIAI_AIRADAR_TRANSCRIBER_URL'
+          'Video transcriber is not configured; set QIUSHUI_AIRADAR_TRANSCRIBER_URL'
         )
       }
       const result = await enrichPlatformVideoContent({
@@ -1183,7 +1183,7 @@ async function ensureInitialState(
       id: 'parameters-global-initial',
       scope: { level: 'global' },
       values: defaultParameters,
-      description: 'qiushuiai-airadar 初始运行参数',
+      description: 'qiushui-airadar 初始运行参数',
     })
   }
 }
@@ -1283,7 +1283,7 @@ async function handleRequest(
   }
   if (method === 'GET' && url.pathname === '/health') {
     return send(response, 200, {
-      service: 'qiushuiai-airadar',
+      service: 'qiushui-airadar',
       status: 'ready',
     })
   }
@@ -1639,8 +1639,8 @@ export function createServiceApp(
   let schedulerTimer: ReturnType<typeof setInterval> | undefined
   const dataRoot =
     options.dataRoot ??
-    process.env.QIUSHUIAI_AIRADAR_DATA_ROOT ??
-    path.join(homedir(), '.qiushuiai-airadar', 'data')
+    process.env.QIUSHUI_AIRADAR_DATA_ROOT ??
+    path.join(homedir(), '.qiushui-airadar', 'data')
   const scheduleTasks = () => {
     if (!options.executeTasks || !repository) return
     const activeRepository = repository
@@ -1700,7 +1700,7 @@ export function createServiceApp(
   return {
     async start(address) {
       if (server)
-        throw new Error('qiushuiai-airadar service is already running')
+        throw new Error('qiushui-airadar service is already running')
       repository = await RuntimeRepository.open(dataRoot)
       await ensureInitialState(repository)
       await enqueueTranslationBackfill(repository)

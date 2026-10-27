@@ -7,7 +7,7 @@ import { afterEach, expect, it } from 'vitest'
 import {
   SingleTableRepository,
   type ScoringRules,
-} from '@qiushuiai-airadar/runtime'
+} from '@qiushui-airadar/runtime'
 
 import {
   collectSourcesSerially,
@@ -25,7 +25,7 @@ afterEach(async () => {
 
 it('classifies an X plugin directory as rule junk without fetching an article or invoking the model', async () => {
   const root = await mkdtemp(
-    path.join(tmpdir(), 'qiushuiai-airadar-directory-')
+    path.join(tmpdir(), 'qiushui-airadar-directory-')
   )
   roots.push(root)
   const repository = await SingleTableRepository.open(root)
@@ -115,7 +115,7 @@ it('classifies an X plugin directory as rule junk without fetching an article or
 })
 
 it('runs sources and items serially with exactly one list call per source', async () => {
-  const root = await mkdtemp(path.join(tmpdir(), 'qiushuiai-airadar-serial-'))
+  const root = await mkdtemp(path.join(tmpdir(), 'qiushui-airadar-serial-'))
   roots.push(root)
   const repository = await SingleTableRepository.open(root)
   repositories.push(repository)
@@ -237,7 +237,7 @@ it('runs sources and items serially with exactly one list call per source', asyn
 
 it('refreshes duplicate interaction data without resolving or analyzing the content again', async () => {
   const root = await mkdtemp(
-    path.join(tmpdir(), 'qiushuiai-airadar-duplicate-refresh-')
+    path.join(tmpdir(), 'qiushui-airadar-duplicate-refresh-')
   )
   roots.push(root)
   const repository = await SingleTableRepository.open(root)
@@ -353,7 +353,7 @@ it('refreshes duplicate interaction data without resolving or analyzing the cont
 
 it('stops the current source after a provider balance failure', async () => {
   const root = await mkdtemp(
-    path.join(tmpdir(), 'qiushuiai-airadar-provider-balance-')
+    path.join(tmpdir(), 'qiushui-airadar-provider-balance-')
   )
   roots.push(root)
   const repository = await SingleTableRepository.open(root)
@@ -429,7 +429,7 @@ it('stops the current source after a provider balance failure', async () => {
 
 it('does not automatically retry a failed content row on the next collection', async () => {
   const root = await mkdtemp(
-    path.join(tmpdir(), 'qiushuiai-airadar-no-auto-retry-')
+    path.join(tmpdir(), 'qiushui-airadar-no-auto-retry-')
   )
   roots.push(root)
   const repository = await SingleTableRepository.open(root)

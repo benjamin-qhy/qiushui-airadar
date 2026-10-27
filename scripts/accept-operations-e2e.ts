@@ -1,5 +1,5 @@
-const baseUrl = process.env.QIUSHUIAI_AIRADAR_ACCEPTANCE_URL
-if (!baseUrl) throw new Error('QIUSHUIAI_AIRADAR_ACCEPTANCE_URL is required')
+const baseUrl = process.env.QIUSHUI_AIRADAR_ACCEPTANCE_URL
+if (!baseUrl) throw new Error('QIUSHUI_AIRADAR_ACCEPTANCE_URL is required')
 
 async function json<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${baseUrl}${path}`, init)

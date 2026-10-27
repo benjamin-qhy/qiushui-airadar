@@ -23,7 +23,7 @@ import {
 const roots: string[] = []
 
 async function temporaryRoot(): Promise<string> {
-  const root = await mkdtemp(path.join(tmpdir(), 'qiushuiai-airadar-runtime-'))
+  const root = await mkdtemp(path.join(tmpdir(), 'qiushui-airadar-runtime-'))
   roots.push(root)
   return root
 }

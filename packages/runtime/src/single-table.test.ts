@@ -56,7 +56,7 @@ async function setup(): Promise<{
   repository: SingleTableRepository
 }> {
   const root = await mkdtemp(
-    path.join(tmpdir(), 'qiushuiai-airadar-single-table-')
+    path.join(tmpdir(), 'qiushui-airadar-single-table-')
   )
   temporaryRoots.push(root)
   const repository = await SingleTableRepository.open(root)
@@ -112,7 +112,7 @@ describe('single-table content storage', () => {
       /^contents\/\d{8}\/x-OpenAI-123-[a-f0-9]{8}\/执行日志\.md$/u
     )
     const database = new DatabaseSync(
-      path.join(root, 'qiushuiai-airadar.sqlite')
+      path.join(root, 'qiushui-airadar.sqlite')
     )
     expect(
       database

@@ -1,5 +1,5 @@
 {
-  "name": "@qiushuiai-airadar/service",
+  "name": "@qiushui-airadar/service",
   "private": true,
   "version": "0.1.0",
   "type": "module",
@@ -20,9 +20,9 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
-    "@qiushuiai-airadar/config": "workspace:*",
-    "@qiushuiai-airadar/pipeline": "workspace:*",
-    "@qiushuiai-airadar/runtime": "workspace:*",
-    "@qiushuiai-airadar/source-adapters": "workspace:*"
+    "@qiushui-airadar/config": "workspace:*",
+    "@qiushui-airadar/pipeline": "workspace:*",
+    "@qiushui-airadar/runtime": "workspace:*",
+    "@qiushui-airadar/source-adapters": "workspace:*"
   }
 }
