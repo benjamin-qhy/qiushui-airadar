@@ -2307,7 +2307,11 @@ export function createSingleTableServiceApp(options: {
       const bound = server.address()
       if (!bound || typeof bound === 'string')
         throw new Error('Invalid listen address')
-      if (options.scheduleCollections) {
+      if (
+        options.scheduleCollections &&
+        (await loadSingleTableConfig(options.configRoot)).runtime.collection
+          .schedule !== 'manual'
+      ) {
         scheduler = createCollectionScheduler({
           stateFile: path.join(options.dataRoot, 'collection-schedule.json'),
           async readPlan() {

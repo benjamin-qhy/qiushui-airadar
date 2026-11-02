@@ -92,3 +92,24 @@ it('records a rejected model preflight and does not repeatedly trigger it', asyn
     await rm(root, { recursive: true, force: true })
   }
 })
+
+it('never triggers collection in manual mode, including after a restart', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'airadar-manual-'))
+  let calls = 0
+  const options = {
+    stateFile: path.join(root, 'schedule.json'),
+    readPlan: async () => ({ expression: 'manual', timezone: 'Asia/Shanghai' }),
+    now: () => new Date('2026-10-27T20:00:00Z'),
+    trigger: async () => {
+      calls++
+      return { accepted: true, message: 'started' }
+    },
+  }
+  try {
+    await createCollectionScheduler(options).tick()
+    await createCollectionScheduler(options).tick()
+    expect(calls).toBe(0)
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})

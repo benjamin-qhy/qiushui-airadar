@@ -185,15 +185,17 @@ export function CollectionStatus({ initial }: { initial: CollectionData }) {
         <p className='mt-2 text-sm'>
           {data.schedule?.active
             ? '定时采集已启用，将自动执行所有已启用信源。'
-            : '当前服务尚未启用定时调度，请使用“手工采集”。'}
+            : '自动采集已关闭，仅在点击“手工采集”后执行。'}
         </p>
         <p className='mt-1 text-sm text-muted-foreground'>
           执行计划：
-          {data.schedule?.timezone === 'Asia/Shanghai' &&
-          /^\d+ \d+ \* \* \*$/u.test(data.schedule.expression)
-            ? `每天北京时间 ${data.schedule.expression.split(' ')[1]!.padStart(2, '0')}:${data.schedule.expression.split(' ')[0]!.padStart(2, '0')}`
-            : (data.schedule?.expression ?? '未配置')}
-          。请保持电脑和服务运行。
+          {data.schedule?.expression === 'manual'
+            ? '仅手动采集'
+            : data.schedule?.timezone === 'Asia/Shanghai' &&
+                /^\d+ \d+ \* \* \*$/u.test(data.schedule.expression)
+              ? `每天北京时间 ${data.schedule.expression.split(' ')[1]!.padStart(2, '0')}:${data.schedule.expression.split(' ')[0]!.padStart(2, '0')}`
+              : (data.schedule?.expression ?? '未配置')}
+          {data.schedule?.active ? '。请保持电脑和服务运行。' : '。'}
         </p>
         {data.schedule?.error && (
           <p role='alert' className='mt-2 text-sm text-destructive'>

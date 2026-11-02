@@ -21,6 +21,7 @@ export function scheduledMinute(
   timezone: string,
   now: Date
 ): string | null {
+  if (expression === 'manual') return null
   const fields = expression.trim().split(/\s+/u)
   const ranges = [
     [0, 59],
