@@ -4,6 +4,7 @@ import { readFile } from 'node:fs/promises'
 import { request as httpRequest } from 'node:http'
 import { request as httpsRequest } from 'node:https'
 import { isIP } from 'node:net'
+import { pinnedArticleRequestOptions } from './article-http.js'
 
 import { Readability } from '@mozilla/readability'
 import {
@@ -1160,6 +1161,36 @@ export class RssAdapter {
 export async function enrichArticle(
   url: string,
   fetcher: Fetcher = globalThis.fetch
+): ReturnType<typeof enrichArticleOnce> {
+  let target = url
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await enrichArticleOnce(target, fetcher)
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      if (
+        attempt >= 2 ||
+        !/ECONNRESET|ETIMEDOUT|EAI_AGAIN|timed out|aborted|socket disconnected|fetch failed/iu.test(
+          message
+        )
+      )
+        throw error
+      const next = new URL(target)
+      // A failed cleartext connection can use the same destination over TLS.
+      // The next attempt performs the full public-address validation again.
+      if (next.protocol === 'http:' && (!next.port || next.port === '80')) {
+        next.protocol = 'https:'
+        next.port = ''
+        target = next.href
+      }
+      await new Promise((resolve) => setTimeout(resolve, 200 * (attempt + 1)))
+    }
+  }
+}
+
+async function enrichArticleOnce(
+  url: string,
+  fetcher: Fetcher
 ): Promise<{
   title: string
   body: string
@@ -1232,19 +1263,7 @@ export async function enrichArticle(
         const request = (
           current.protocol === 'https:' ? httpsRequest : httpRequest
         )(
-          {
-            hostname: selected.address,
-            family: selected.family,
-            port: current.port || undefined,
-            path: `${current.pathname}${current.search}`,
-            method: 'GET',
-            servername: current.hostname,
-            headers: {
-              host: current.host,
-              accept: 'text/html,application/xhtml+xml',
-              'user-agent': articleUserAgent,
-            },
-          },
+          pinnedArticleRequestOptions(current, selected, articleUserAgent),
           (response) => {
             const chunks: Buffer[] = []
             let size = 0
@@ -1297,14 +1316,35 @@ export async function enrichArticle(
     throw new Error(`Article response is not HTML: ${contentType}`)
   }
   const { document } = parseHTML(html)
-  const article = new Readability(document as unknown as Document, {
-    charThreshold: 200,
-  }).parse()
-  const body = article?.textContent?.replace(/\s+/gu, ' ').trim() ?? ''
+  const article = new Readability(
+    document.cloneNode(true) as unknown as Document,
+    {
+      charThreshold: 200,
+    }
+  ).parse()
+  let body = article?.textContent?.replace(/\s+/gu, ' ').trim() ?? ''
+  let articleHtml = article?.content ?? ''
+  if (body.length < 200) {
+    // React streaming can ship the completed article in a hidden container
+    // before its reveal script. Readability drops it; retain the actual article
+    // markup only, never navigation, an app shell or a metadata-only summary.
+    const fallback = parseHTML(
+      document.querySelector('article')?.outerHTML ?? ''
+    ).document
+    fallback
+      .querySelectorAll('script,style,nav,header,footer,aside,button')
+      .forEach((node) => node.remove())
+    const text =
+      fallback.documentElement?.textContent?.replace(/\s+/gu, ' ').trim() ?? ''
+    if (fallback.querySelectorAll('p').length >= 2 && text.length >= 200) {
+      body = text
+      articleHtml = fallback.toString()
+    }
+  }
   if (body.length < 200) {
     throw new Error('Could not extract a complete article body')
   }
-  const articleDocument = parseHTML(article?.content ?? '').document
+  const articleDocument = parseHTML(articleHtml).document
   const images: Array<{ order: number; url: string }> = []
   const seenImages = new Set<string>()
   for (const image of articleDocument.querySelectorAll('img')) {

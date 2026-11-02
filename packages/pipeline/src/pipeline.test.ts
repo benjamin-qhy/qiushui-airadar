@@ -2021,3 +2021,35 @@ describe('analysis and end-to-end orchestration', () => {
     await runtime.close()
   })
 })
+
+it('extracts a complete streamed article when Readability removes its hidden server-rendered container', async () => {
+  const paragraph =
+    'Vercel has completed Linux kernel security updates. Customers should update their own Linux hosts and reboot to activate the patched kernel. '
+  const html = `<html><head><title>Security advisory</title></head><body><main></main><div hidden id="S:0"><article><h1>Security advisory</h1><p>${paragraph}</p><p>${paragraph}</p></article></div></body></html>`
+  const result = await enrichArticle(
+    'https://example.com/advisory',
+    async () => new Response(html, { headers: { 'content-type': 'text/html' } })
+  )
+  expect(result.body).toContain('Customers should update their own Linux hosts')
+  expect(result.body.length).toBeGreaterThan(200)
+})
+
+it('retries only transient article failures and upgrades failed cleartext transport to TLS', async () => {
+  const visited: string[] = []
+  const result = await enrichArticle(
+    'http://example.com/story',
+    async (url) => {
+      visited.push(String(url))
+      if (visited.length === 1) throw new Error('read ECONNRESET')
+      return new Response(
+        `<html><body><article><p>${'An original and complete article with substantial useful details. '.repeat(8)}</p></article></body></html>`,
+        { headers: { 'content-type': 'text/html' } }
+      )
+    }
+  )
+  expect(visited).toEqual([
+    'http://example.com/story',
+    'https://example.com/story',
+  ])
+  expect(result.body.length).toBeGreaterThan(200)
+})
