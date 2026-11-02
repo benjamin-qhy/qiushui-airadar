@@ -17,6 +17,10 @@ import {
   saveSourceState,
   sourcesConfigSchema,
   providerRoutesSchema,
+  saveTranslationThreshold,
+  saveCollectionConcurrency,
+  saveTwitterVideoPolicy,
+  collectionConcurrencySchema,
   updateFileSecret,
   type SingleTableConfig,
 } from '@qiushui-airadar/config'
@@ -25,7 +29,7 @@ import {
   type ContentRow,
 } from '@qiushui-airadar/runtime'
 import {
-  classifyNonArticlePage,
+  classifyUnprocessedContent,
   normalizeYouTubeIdentity,
 } from '@qiushui-airadar/source-adapters'
 import {
@@ -50,7 +54,11 @@ import {
   createCollectionControl,
   type CollectionControl,
 } from './collect-single-table.js'
-import { readCollectionRun } from './collection-run.js'
+import {
+  readCollectionRun,
+  readCollectionHistory,
+  collectionHistorySummary,
+} from './collection-run.js'
 import { createCollectionScheduler } from './collection-scheduler.js'
 
 const scoreNames = {
@@ -245,6 +253,7 @@ const actionMessages: Record<string, string> = {
   'manual-retry': '已开始人工重试',
   'manual-junk': '已更新人工垃圾标记',
   'rule-junk': '已按规则排除内容',
+  'processing-excluded': '已归入未处理',
 }
 
 function contentLogMessage(entry: LogEntry): string {
@@ -308,6 +317,27 @@ async function runtimeLogs(
   )
 }
 
+async function applyUnprocessedPolicies(
+  repository: SingleTableRepository,
+  processMedia: boolean
+) {
+  let excluded = 0
+  for (const row of repository.processingPolicyCandidates()) {
+    const reason = classifyUnprocessedContent({
+      platform: String(row.source_platform),
+      kind: row.content_kind,
+      url: row.canonical_url ?? undefined,
+      processMedia,
+      error: String(row.last_error ?? ''),
+    })
+    if (reason) {
+      const updated = await repository.setUnprocessed(row.id, reason)
+      if (updated.is_unprocessed) excluded++
+    }
+  }
+  return excluded
+}
+
 async function feedItem(
   repository: SingleTableRepository,
   row: ContentRow,
@@ -339,7 +369,7 @@ async function feedItem(
     firstInflowAt: row.first_inflow_at,
     originalFormat: row.original_format,
     externalContentId: row.external_content_id,
-    processStage: row.processing_stage,
+    processStage: row.is_unprocessed ? 'unprocessed' : row.processing_stage,
     retryCount: row.retry_count,
     lastError: row.last_error,
     lastProcessedAt: row.last_processed_at,
@@ -361,7 +391,12 @@ async function feedItem(
     scores,
     totalScore: row.total_score,
     recommendation: row.recommendation,
-    kind: row.content_kind,
+    kind:
+      row.is_unprocessed && /^(?:语音|音频)/u.test(row.unprocessed_reason ?? '')
+        ? 'audio'
+        : row.is_unprocessed && /视频/u.test(row.unprocessed_reason ?? '')
+          ? 'video'
+          : row.content_kind,
     source: source
       ? {
           id: source.id,
@@ -392,7 +427,8 @@ async function feedItem(
             mediaUrl: row.video_media_url,
           }
         : undefined,
-    processStatus: row.process_status,
+    processStatus: row.is_unprocessed ? 'unprocessed' : row.process_status,
+    unprocessedReason: row.unprocessed_reason ?? undefined,
     originalStatus: row.original_status,
     read: Boolean(row.read),
     utilizationActions: arrayValue(row.utilization_actions_json),
@@ -662,6 +698,11 @@ export function createSingleTableServiceApp(options: {
         throw new Error('Unsupported service host')
       repository = await SingleTableRepository.open(options.dataRoot)
       const activeRepository = repository
+      await applyUnprocessedPolicies(
+        activeRepository,
+        (await loadSingleTableConfig(options.configRoot)).runtime.collection
+          .process_media
+      )
       const executeBatch = (batch: RetryBatch) => {
         activeBatch = batch
         const task = (async () => {
@@ -901,18 +942,23 @@ export function createSingleTableServiceApp(options: {
             (url.pathname === '/api/contents' || url.pathname === '/api/daily')
           ) {
             const config = await loadSingleTableConfig(options.configRoot)
-            const rows = activeRepository
-              .search({
-                keyword: url.searchParams.get('keyword') ?? undefined,
-                isJunk: url.pathname === '/api/daily' ? false : undefined,
-                limit: 500,
-              })
-              .filter(
-                (row) =>
-                  url.pathname !== '/api/daily' ||
-                  (row.process_status === 'completed' &&
-                    row.recommendation !== 'none')
-              )
+            const rows = (
+              url.searchParams.get('scope') === 'unprocessed'
+                ? activeRepository.unprocessedRows(
+                    url.searchParams.get('keyword') ?? undefined
+                  )
+                : activeRepository.search({
+                    isUnprocessed: false,
+                    keyword: url.searchParams.get('keyword') ?? undefined,
+                    isJunk: url.pathname === '/api/daily' ? false : undefined,
+                    limit: 500,
+                  })
+            ).filter(
+              (row) =>
+                url.pathname !== '/api/daily' ||
+                (row.process_status === 'completed' &&
+                  row.recommendation !== 'none')
+            )
             return send(response, 200, {
               items: await Promise.all(
                 rows.map((row) =>
@@ -1143,11 +1189,46 @@ export function createSingleTableServiceApp(options: {
               mode: 'single-table',
               ...activeRepository.runtimeOverview(),
               collection: await readCollectionRun(options.dataRoot),
+              history: (await readCollectionHistory(options.dataRoot)).map(
+                collectionHistorySummary
+              ),
               schedule: {
                 expression: config.runtime.collection.schedule,
                 timezone: config.runtime.timezone,
                 ...(scheduler?.status() ?? { active: false }),
               },
+            })
+          }
+          if (
+            url.pathname === '/api/collection/concurrency' &&
+            method === 'GET'
+          ) {
+            const config = await loadSingleTableConfig(options.configRoot)
+            return send(response, 200, {
+              ...collectionConcurrencySchema.parse(config.runtime.collection),
+              requests_per_second:
+                config.runtime.collection.requests_per_second,
+            })
+          }
+          if (
+            [
+              '/api/collection/twitter-video-policy',
+              '/api/collection/media-policy',
+            ].includes(url.pathname) &&
+            method === 'GET'
+          ) {
+            const config = await loadSingleTableConfig(options.configRoot)
+            return send(response, 200, {
+              enabled: config.runtime.collection.process_media,
+            })
+          }
+          if (
+            url.pathname === '/api/collection/translation-policy' &&
+            method === 'GET'
+          ) {
+            const config = await loadSingleTableConfig(options.configRoot)
+            return send(response, 200, {
+              minimumScore: config.analysis.translation.minimum_total_score,
             })
           }
           if (method === 'GET' && url.pathname === '/api/config') {
@@ -1176,6 +1257,78 @@ export function createSingleTableServiceApp(options: {
               !request.headers['content-type']?.startsWith('application/json')
             )
               return send(response, 415, { error: 'json_required' })
+            if (
+              [
+                '/api/collection/twitter-video-policy',
+                '/api/collection/media-policy',
+              ].includes(url.pathname) &&
+              method === 'PUT'
+            ) {
+              const input = await bodyOf(request)
+              if (typeof input.enabled !== 'boolean')
+                return send(response, 400, {
+                  message: '视频处理开关须为布尔值。',
+                })
+              if (collection)
+                return send(response, 409, {
+                  message: '请在本轮采集结束后修改视频与语音设置。',
+                })
+              await saveTwitterVideoPolicy(options.configRoot, input.enabled)
+              const excluded = await applyUnprocessedPolicies(
+                activeRepository,
+                input.enabled
+              )
+              return send(response, 200, { enabled: input.enabled, excluded })
+            }
+            if (
+              url.pathname === '/api/collection/concurrency' &&
+              method === 'PUT'
+            ) {
+              const body = await bodyOf(request)
+              const input = collectionConcurrencySchema.safeParse(body)
+              const rate = body.requests_per_second
+              if (
+                !input.success ||
+                (rate !== undefined &&
+                  (typeof rate !== 'number' ||
+                    !Number.isFinite(rate) ||
+                    rate <= 0))
+              )
+                return send(response, 400, {
+                  message: '三个并发数须为正整数，每秒请求数须大于0。',
+                })
+              await saveCollectionConcurrency(options.configRoot, {
+                ...input.data,
+                requests_per_second:
+                  typeof rate === 'number' ? rate : undefined,
+              })
+              const updated = await loadSingleTableConfig(options.configRoot)
+              return send(response, 200, {
+                ...input.data,
+                requests_per_second:
+                  updated.runtime.collection.requests_per_second,
+              })
+            }
+            if (
+              url.pathname === '/api/collection/translation-policy' &&
+              method === 'PUT'
+            ) {
+              const input = await bodyOf(request)
+              const minimumScore = input.minimumScore
+              if (
+                !Number.isInteger(minimumScore) ||
+                Number(minimumScore) < 0 ||
+                Number(minimumScore) > 100
+              )
+                return send(response, 400, {
+                  message: '翻译分数须为0至100之间的整数。',
+                })
+              await saveTranslationThreshold(
+                options.configRoot,
+                Number(minimumScore)
+              )
+              return send(response, 200, { minimumScore })
+            }
             if (method === 'PUT' && url.pathname === '/api/transcription') {
               const body = await bodyOf(request)
               if (typeof body.enabled !== 'boolean')
@@ -1827,6 +1980,7 @@ export function createSingleTableServiceApp(options: {
               if (
                 row.original_language !== 'en' ||
                 row.is_junk ||
+                row.is_unprocessed ||
                 row.process_status !== 'completed'
               )
                 return send(response, 409, {
@@ -1933,23 +2087,22 @@ export function createSingleTableServiceApp(options: {
                 }
               }
               retrying.add(id)
+              let resolvedForRetry = false
+              let retryMediaEnabled = false
               try {
                 const config = await loadSingleTableConfig(options.configRoot)
-                const source = config.sources.sources.find(
-                  (item) => item.id === row.source_account_id
-                )
-                if (!source)
-                  return send(response, 409, { error: 'source_not_configured' })
-                const nonArticleReason =
-                  row.source_platform === 'x' &&
-                  row.content_kind === 'article' &&
-                  row.canonical_url
-                    ? classifyNonArticlePage(String(row.canonical_url))
-                    : undefined
-                if (nonArticleReason) {
-                  const excluded = await activeRepository.setRuleJunk(
+                retryMediaEnabled = config.runtime.collection.process_media
+                const excludedReason = classifyUnprocessedContent({
+                  platform: String(row.source_platform),
+                  kind: row.content_kind,
+                  url: row.canonical_url ?? undefined,
+                  processMedia: config.runtime.collection.process_media,
+                  error: String(row.last_error ?? ''),
+                })
+                if (excludedReason) {
+                  const excluded = await activeRepository.setUnprocessed(
                     id,
-                    nonArticleReason
+                    excludedReason
                   )
                   return send(response, 200, {
                     item: await feedItem(
@@ -1959,6 +2112,11 @@ export function createSingleTableServiceApp(options: {
                     ),
                   })
                 }
+                const source = config.sources.sources.find(
+                  (item) => item.id === row.source_account_id
+                )
+                if (!source)
+                  return send(response, 409, { error: 'source_not_configured' })
                 const reader = createFileSecretReader(
                   options.secretFile ?? path.join(options.dataRoot, '.env')
                 )
@@ -2091,12 +2249,15 @@ export function createSingleTableServiceApp(options: {
                       // Native X videos need the source discovery path.
                     }
                   }
-                  if (youtubeVideo) {
+                  if (
+                    youtubeVideo ||
+                    (row.content_kind === 'article' && row.canonical_url)
+                  ) {
                     const resolved = await provider.resolve(source, {
                       externalId: String(row.external_content_id ?? ''),
                       url: String(row.canonical_url),
                       title: row.title,
-                      kind: 'video',
+                      kind: row.content_kind,
                     })
                     original = resolved.original
                     capturedCalls = resolved.calls ?? []
@@ -2129,6 +2290,13 @@ export function createSingleTableServiceApp(options: {
                     ]
                   }
                 }
+                // A retry enriches the stored item; a redirect must not create
+                // a second row while leaving the original failure behind.
+                original = {
+                  ...original,
+                  canonicalUrl: row.canonical_url ?? original.canonicalUrl,
+                }
+                resolvedForRetry = true
                 await activeRepository.appendLog(id, {
                   action: 'manual-retry',
                   stage: 'discovered',
@@ -2185,7 +2353,39 @@ export function createSingleTableServiceApp(options: {
                     config.sources.sources
                   ),
                 })
-              } catch {
+              } catch (error) {
+                if (!resolvedForRetry) {
+                  const excludedReason = classifyUnprocessedContent({
+                    platform: String(row.source_platform),
+                    kind: row.content_kind,
+                    url: row.canonical_url ?? undefined,
+                    processMedia: retryMediaEnabled,
+                    error: String(error),
+                  })
+                  if (excludedReason) {
+                    const excluded = await activeRepository.setUnprocessed(
+                      id,
+                      excludedReason
+                    )
+                    return send(response, 200, {
+                      item: await feedItem(
+                        activeRepository,
+                        excluded,
+                        (await loadSingleTableConfig(options.configRoot))
+                          .sources.sources
+                      ),
+                    })
+                  }
+                  activeRepository.fail(id, 'enriching', error)
+                  await activeRepository.appendLog(id, {
+                    action: 'manual-retry',
+                    stage: 'enriching',
+                    status: 'failed',
+                    trigger: 'manual-retry',
+                    error:
+                      error instanceof Error ? error.message : String(error),
+                  })
+                }
                 return send(response, 502, {
                   error: 'manual_retry_failed',
                   message: '重试失败，详情见该内容的执行日志。',

@@ -6,6 +6,7 @@ import {
   Bot,
   Cable,
   Database,
+  Inbox,
   ListFilter,
   Radar,
   ScrollText,
@@ -40,6 +41,7 @@ const navigationGroups: Array<{
     items: [
       { id: 'daily', label: '每日精选', icon: Sparkles },
       { id: 'all', label: '全部内容', icon: ListFilter },
+      { id: 'unprocessed', label: '未处理', icon: Inbox },
       { id: 'exceptions', label: '异常数据', icon: TriangleAlert },
       { id: 'favorites', label: '我的收藏', icon: Bookmark },
       { id: 'junk', label: '垃圾内容', icon: Trash2 },

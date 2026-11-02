@@ -12,10 +12,96 @@ import { request } from 'node:http'
 
 import { expect, it } from 'vitest'
 
-import { initializeSingleTableConfig } from '@qiushui-airadar/config'
+import {
+  initializeSingleTableConfig,
+  saveTwitterVideoPolicy,
+} from '@qiushui-airadar/config'
 import { SingleTableRepository } from '@qiushui-airadar/runtime'
 
 import { createSingleTableServiceApp } from './single-table-service.js'
+
+it('persists independent concurrency settings above the old limits and rejects invalid or cross-origin writes', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'airadar-concurrency-api-'))
+  const configRoot = await initializeSingleTableConfig(
+    path.resolve('config'),
+    root
+  )
+  const service = createSingleTableServiceApp({ dataRoot: root, configRoot })
+  try {
+    const { port } = await service.start({ host: '127.0.0.1', port: 0 })
+    const url = `http://127.0.0.1:${port}/api/collection/concurrency`
+    const put = (values: unknown, origin?: string) =>
+      fetch(url, {
+        method: 'PUT',
+        headers: {
+          'content-type': 'application/json',
+          ...(origin ? { origin } : {}),
+        },
+        body: JSON.stringify(values),
+      })
+    expect(await (await fetch(url)).json()).toEqual({
+      scan_concurrency: 4,
+      processing_concurrency: 3,
+      translation_concurrency: 3,
+      requests_per_second: 4,
+    })
+    const values = {
+      scan_concurrency: 10,
+      processing_concurrency: 10,
+      translation_concurrency: 50,
+      requests_per_second: 20,
+    }
+    expect((await put(values)).status).toBe(200)
+    expect(await (await fetch(url)).json()).toEqual(values)
+    for (const value of [0, -1, 1.5, '10'])
+      expect(
+        (await put({ ...values, processing_concurrency: value })).status
+      ).toBe(400)
+    expect((await put(values, 'https://evil.example')).status).toBe(403)
+    expect(await (await fetch(url)).json()).toEqual(values)
+    expect((await put({ ...values, requests_per_second: 0 })).status).toBe(400)
+    expect((await put({ ...values, requests_per_second: 1000 })).status).toBe(
+      200
+    )
+    expect((await put({ ...values, requests_per_second: 0.2 })).status).toBe(
+      200
+    )
+  } finally {
+    await service.stop()
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+it('reads and saves the translation score policy with validation and same-origin protection', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'airadar-policy-'))
+  const configRoot = await initializeSingleTableConfig(
+    path.resolve('config'),
+    root
+  )
+  const service = createSingleTableServiceApp({ dataRoot: root, configRoot })
+  try {
+    const { port } = await service.start({ host: '127.0.0.1', port: 0 })
+    const url = `http://127.0.0.1:${port}/api/collection/translation-policy`
+    expect(await (await fetch(url)).json()).toEqual({ minimumScore: 60 })
+    const put = (minimumScore: unknown, origin?: string) =>
+      fetch(url, {
+        method: 'PUT',
+        headers: {
+          'content-type': 'application/json',
+          ...(origin ? { origin } : {}),
+        },
+        body: JSON.stringify({ minimumScore }),
+      })
+    expect((await put(60.5)).status).toBe(400)
+    expect((await put(101)).status).toBe(400)
+    expect((await put(0, 'https://evil.example')).status).toBe(403)
+    expect((await put(70)).status).toBe(200)
+    expect(await (await fetch(url)).json()).toEqual({ minimumScore: 70 })
+  } finally {
+    await service.stop()
+    await rm(root, { recursive: true, force: true })
+  }
+})
 
 it('accepts a same-origin LAN page while rejecting another site', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'airadar-lan-origin-'))
@@ -190,7 +276,7 @@ it('starts one manual translation for completed English content and rejects retr
   }
 })
 
-it('reclassifies a previously failed X plugin directory on retry without fetching it', async () => {
+it('reclassifies a previously failed X plugin directory into unprocessed at startup without fetching it', async () => {
   const root = await mkdtemp(
     path.join(tmpdir(), 'qiushui-airadar-directory-retry-')
   )
@@ -221,21 +307,14 @@ it('reclassifies a previously failed X plugin directory on retry without fetchin
     service = createSingleTableServiceApp({ dataRoot: root, configRoot })
     const address = await service.start({ host: '127.0.0.1', port: 0 })
     const response = await fetch(
-      `http://${address.host}:${address.port}/api/contents/${row.id}/retry`,
-      {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: '{}',
-      }
+      `http://${address.host}:${address.port}/api/contents/${row.id}`
     )
     expect(response.status).toBe(200)
     expect((await response.json()) as unknown).toMatchObject({
       item: {
-        junk: {
-          isJunk: true,
-          source: 'rule',
-          reason: '目录页：插件列表，不是单篇文章',
-        },
+        processStatus: 'unprocessed',
+        unprocessedReason: '目录页：插件列表，不是单篇文章',
+        junk: { isJunk: false, source: 'none' },
       },
     })
   } finally {
@@ -487,6 +566,7 @@ it('processes a waiting video from a supplied transcript without rediscovering i
       path.resolve(import.meta.dirname, '../../../config'),
       root
     )
+    await saveTwitterVideoPolicy(configRoot, true)
     const repository = await SingleTableRepository.open(root)
     const row = await repository.recordUnavailable(
       {
@@ -1033,6 +1113,371 @@ it('keeps a new API key pending until its model responds and excludes non-model 
     })
   } finally {
     await service?.stop()
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+it('defaults Twitter video processing off, retires pending videos with an explicit label and validates updates', async () => {
+  const root = await mkdtemp(
+    path.join(tmpdir(), 'airadar-twitter-video-policy-')
+  )
+  const configRoot = await initializeSingleTableConfig(
+    path.resolve('config'),
+    root
+  )
+  const repository = await SingleTableRepository.open(root)
+  const row = await repository.recordUnavailable(
+    {
+      platform: 'x',
+      sourceType: 'x',
+      sourceAccountId: 'x_openai',
+      sourceAccountName: 'OpenAI',
+      externalContentId: 'video-excluded',
+      title: 'Twitter video',
+      kind: 'video',
+      format: 'subtitle',
+      language: 'en',
+    },
+    'No captions',
+    true
+  )
+  const youtube = await repository.recordUnavailable(
+    {
+      platform: 'youtube',
+      sourceType: 'youtube',
+      sourceAccountId: 'yt',
+      sourceAccountName: 'YouTube',
+      externalContentId: 'yt-pending',
+      title: 'YouTube video',
+      kind: 'video',
+      format: 'subtitle',
+      language: 'en',
+    },
+    'No captions',
+    true
+  )
+  repository.close()
+  const service = createSingleTableServiceApp({ dataRoot: root, configRoot })
+  try {
+    const { port } = await service.start({ host: '127.0.0.1', port: 0 })
+    const url = `http://127.0.0.1:${port}/api/collection/twitter-video-policy`
+    expect(await (await fetch(url)).json()).toEqual({ enabled: false })
+    const reopened = await SingleTableRepository.open(root)
+    try {
+      expect(reopened.getById(row.id)).toMatchObject({
+        is_unprocessed: 1,
+        is_junk: 0,
+        unprocessed_reason: 'Twitter 视频',
+        process_status: 'completed',
+        translation_status: 'skipped',
+      })
+      expect(reopened.getById(youtube.id)).toMatchObject({
+        is_unprocessed: 1,
+        is_junk: 0,
+        unprocessed_reason: '视频内容',
+      })
+    } finally {
+      reopened.close()
+    }
+    const update = (enabled: unknown, origin?: string) =>
+      fetch(url, {
+        method: 'PUT',
+        headers: {
+          'content-type': 'application/json',
+          ...(origin ? { origin } : {}),
+        },
+        body: JSON.stringify({ enabled }),
+      })
+    expect((await update('false')).status).toBe(400)
+    expect((await update(true, 'https://evil.example')).status).toBe(403)
+    expect((await update(true)).status).toBe(200)
+    expect(await (await fetch(url)).json()).toEqual({ enabled: true })
+    expect((await update(false)).status).toBe(200)
+  } finally {
+    await service.stop()
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+it('retries an old redirected article directly without scanning the latest posts or changing its stored identity', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'airadar-old-article-retry-'))
+  const configRoot = await initializeSingleTableConfig(
+    path.resolve('config'),
+    root
+  )
+  const repository = await SingleTableRepository.open(root)
+  const row = await repository.recordUnavailable(
+    {
+      platform: 'x',
+      sourceType: 'x',
+      sourceAccountId: 'x_openai',
+      sourceAccountName: 'OpenAI',
+      externalContentId: 'old-article',
+      canonicalUrl: 'http://example.com/old',
+      title: 'Old article',
+      kind: 'article',
+      format: 'plain_text',
+      language: 'en',
+    },
+    'Host mismatch',
+    false
+  )
+  repository.setRead(row.id, true)
+  repository.close()
+  let calls = 0
+  const service = createSingleTableServiceApp({
+    dataRoot: root,
+    configRoot,
+    providerFetch: async (input) => {
+      calls++
+      expect(String(input)).toBe('http://example.com/old')
+      const response = new Response(
+        `<html><head><title>Complete article</title></head><body><article><p>${'Detailed original article evidence and explanation. '.repeat(12)}</p></article></body></html>`,
+        { headers: { 'content-type': 'text/html' } }
+      )
+      Object.defineProperty(response, 'url', {
+        value: 'https://example.com/final',
+      })
+      return response
+    },
+    gateway: {
+      async complete() {
+        return {
+          text: '---\nkeywords: [测试]\nspam: {isJunk: true, reason: "测试内容"}\n---\n中文摘要',
+          provider: 'mock',
+          model: 'mock',
+          durationMs: 1,
+        }
+      },
+    },
+  })
+  try {
+    const { port } = await service.start({ host: '127.0.0.1', port: 0 })
+    const response = await fetch(
+      `http://127.0.0.1:${port}/api/contents/${row.id}/retry`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: '{}',
+      }
+    )
+    expect(
+      response.status,
+      await readFile(path.join(root, row.execution_log_markdown_path), 'utf8')
+    ).toBe(200)
+    expect(calls).toBe(1)
+    const reopened = await SingleTableRepository.open(root)
+    try {
+      expect(reopened.search({})).toHaveLength(1)
+      expect(reopened.getById(row.id)).toMatchObject({
+        process_status: 'completed',
+        read: 1,
+        original_format: 'plain_text',
+      })
+      expect(await reopened.readBody(row.id, 'en')).toContain(
+        'Detailed original article'
+      )
+    } finally {
+      reopened.close()
+    }
+  } finally {
+    await service.stop()
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+it('migrates rule exclusions and unsupported media into a separate module, preserves completed history, and lists more than 500 rows', async () => {
+  const { DatabaseSync } = await import('node:sqlite')
+  const root = await mkdtemp(path.join(tmpdir(), 'airadar-unprocessed-module-'))
+  const configRoot = await initializeSingleTableConfig(
+    path.resolve('config'),
+    root
+  )
+  const repository = await SingleTableRepository.open(root)
+  const make = async (
+    id: string,
+    platform: string,
+    kind: 'video' | 'article',
+    url: string
+  ) =>
+    repository.recordUnavailable(
+      {
+        platform,
+        sourceType: platform,
+        sourceAccountId: platform === 'x' ? 'x_openai' : 'yt',
+        sourceAccountName: platform,
+        externalContentId: id,
+        canonicalUrl: url,
+        title: id,
+        kind,
+        format: 'plain_text',
+        language: 'en',
+      },
+      'Temporary connection failure',
+      kind === 'video'
+    )
+  const oldRule = await make(
+    'old-rule',
+    'x',
+    'video',
+    'https://x.com/i/status/old-rule'
+  )
+  await repository.setRuleJunk(oldRule.id, 'Twitter 视频')
+  repository.setRead(oldRule.id, true)
+  repository.setUtilizationActions(oldRule.id, ['favorite'])
+  const pending = await make(
+    'yt-new',
+    'youtube',
+    'video',
+    'https://youtube.com/watch?v=new'
+  )
+  const audio = await make(
+    'audio',
+    'x',
+    'article',
+    'https://x.com/i/spaces/123'
+  )
+  const pdf = await make(
+    'pdf',
+    'x',
+    'article',
+    'https://example.com/report.pdf'
+  )
+  const app = await make(
+    'app',
+    'x',
+    'article',
+    'https://huggingface.co/spaces/team/demo'
+  )
+  const tool = await make(
+    'tool',
+    'x',
+    'article',
+    'https://platform.heygen.com/speech-to-speech'
+  )
+  const transient = await make(
+    'transient',
+    'x',
+    'article',
+    'https://example.com/article'
+  )
+  const completed = await make(
+    'completed',
+    'x',
+    'video',
+    'https://x.com/i/status/completed'
+  )
+  const aiJunk = await make(
+    'ai-junk',
+    'x',
+    'video',
+    'https://x.com/i/status/ai-junk'
+  )
+  repository.close()
+  const db = new DatabaseSync(path.join(root, 'qiushui-airadar.sqlite'))
+  db.prepare(
+    "UPDATE contents SET process_status='completed',processing_stage='completed',translation_status='pending',total_score=85,recommendation='core',summary='Existing analysis' WHERE id=?"
+  ).run(completed.id)
+  db.prepare(
+    "UPDATE contents SET process_status='completed',processing_stage='completed',translation_status='pending',is_junk=1,junk_source='ai',junk_reason='Existing AI decision' WHERE id=?"
+  ).run(aiJunk.id)
+  const before = db
+    .prepare('SELECT * FROM contents WHERE id IN (?,?) ORDER BY id')
+    .all(completed.id, aiJunk.id)
+  db.close()
+  const service = createSingleTableServiceApp({
+    dataRoot: root,
+    configRoot,
+    gateway: {
+      async complete() {
+        throw new Error('Migration must not call AI')
+      },
+    },
+  })
+  try {
+    const { port } = await service.start({ host: '127.0.0.1', port: 0 })
+    const base = `http://127.0.0.1:${port}`
+    const result = (await (
+      await fetch(base + '/api/contents?scope=unprocessed')
+    ).json()) as {
+      items: Array<{
+        id: string
+        processStatus: string
+        junk: { isJunk: boolean }
+        kind: string
+      }>
+    }
+    expect(result.items.map((x) => x.id).sort()).toEqual(
+      [oldRule.id, pending.id, audio.id, pdf.id, app.id, tool.id].sort()
+    )
+    for (const item of result.items) {
+      expect(item.processStatus).toBe('unprocessed')
+      expect(item.junk.isJunk).toBe(false)
+    }
+    expect(result.items.find((x) => x.id === audio.id)?.kind).toBe('audio')
+    expect(result.items.find((x) => x.id === tool.id)?.kind).toBe('article')
+    const check = new DatabaseSync(path.join(root, 'qiushui-airadar.sqlite'))
+    try {
+      expect(
+        check
+          .prepare('SELECT * FROM contents WHERE id IN (?,?) ORDER BY id')
+          .all(completed.id, aiJunk.id)
+      ).toEqual(before)
+      expect(
+        check
+          .prepare('SELECT process_status FROM contents WHERE id=?')
+          .get(transient.id)
+      ).toMatchObject({ process_status: 'failed' })
+      expect(
+        check
+          .prepare(
+            'SELECT read,utilization_actions_json FROM contents WHERE id=?'
+          )
+          .get(oldRule.id)
+      ).toMatchObject({ read: 1, utilization_actions_json: '["favorite"]' })
+      const columns = (
+        check.prepare('PRAGMA table_info(contents)').all() as Array<{
+          name: string
+        }>
+      ).map((x) => x.name)
+      const projection = columns
+        .map((name) =>
+          name === 'id' || name === 'identity_key' || name === 'identity_value'
+            ? '?'
+            : `"${name}"`
+        )
+        .join(',')
+      const clone = check.prepare(
+        `INSERT INTO contents (${columns.map((x) => `"${x}"`).join(',')}) SELECT ${projection} FROM contents WHERE id=?`
+      )
+      for (let i = 0; i < 501; i++)
+        clone.run(
+          `clone-${i}`,
+          `clone-value-${i}`,
+          `clone-key-${i}`,
+          oldRule.id
+        )
+    } finally {
+      check.close()
+    }
+    const all = (await (
+      await fetch(base + '/api/contents?scope=unprocessed')
+    ).json()) as { items: unknown[] }
+    expect(all.items).toHaveLength(507)
+    const normal = (await (await fetch(base + '/api/contents')).json()) as {
+      items: Array<{ processStatus: string }>
+    }
+    expect(normal.items.some((x) => x.processStatus === 'unprocessed')).toBe(
+      false
+    )
+    const saved = await fetch(base + '/api/collection/media-policy', {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: '{"enabled":false}',
+    })
+    expect(await saved.json()).toMatchObject({ enabled: false, excluded: 0 })
+  } finally {
+    await service.stop()
     await rm(root, { recursive: true, force: true })
   }
 })

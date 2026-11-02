@@ -9,7 +9,7 @@ prompts:
   score: 3
   translate: 3
 translation:
-  minimum_total_score: 10
+  minimum_total_score: 60
   automatic_video_max_duration_seconds: 1800
   automatic_max_source_characters: 27000
 summarization:

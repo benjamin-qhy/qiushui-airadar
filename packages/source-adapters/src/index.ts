@@ -6,6 +6,91 @@ import {
   type SourceType,
 } from '@qiushui-airadar/domain'
 
+export const twitterVideoJunkReason = 'Twitter 视频'
+
+/** A deliberate processing decision, separate from quality/junk classification. */
+export function classifyUnprocessedContent(input: {
+  platform: string
+  kind: string
+  url?: string
+  processMedia?: boolean
+  error?: string
+}): string | undefined {
+  let url: URL | undefined
+  try {
+    if (input.url) url = new URL(input.url)
+  } catch {
+    /* Invalid links remain ordinary failures. */
+  }
+  if (!input.processMedia) {
+    if (input.kind === 'audio') return '语音或音频内容'
+    if (
+      input.kind === 'video' ||
+      isTwitterVideo(input.platform, input.kind, input.url)
+    )
+      return input.platform === 'x' ? 'Twitter 视频' : '视频内容'
+    if (
+      url &&
+      /^(?:www\.)?(?:x\.com|twitter\.com)$/iu.test(url.hostname) &&
+      /^\/i\/spaces\//u.test(url.pathname)
+    )
+      return '语音直播：Twitter Spaces'
+    if (url && /\.(?:mp3|m4a|wav|aac|ogg|flac|opus)$/iu.test(url.pathname))
+      return '语音或音频内容'
+    if (
+      url &&
+      (/\.(?:mp4|webm|mov|m3u8)$/iu.test(url.pathname) ||
+        (/^(?:www\.|m\.)?(?:youtube\.com|youtu\.be)$/iu.test(url.hostname) &&
+          (url.hostname.endsWith('youtu.be') ||
+            /^\/(?:watch|shorts|live|embed)(?:\/|$)/u.test(url.pathname))))
+    )
+      return '视频内容'
+    if (/Article response is not HTML:\s*audio\//iu.test(input.error ?? ''))
+      return '语音或音频内容'
+    if (/Article response is not HTML:\s*video\//iu.test(input.error ?? ''))
+      return '视频内容'
+  }
+  if (url) {
+    const known = classifyNonArticlePage(url.href)
+    if (known) return known
+    if (
+      (url.hostname === 'huggingface.co' &&
+        /^\/spaces\//u.test(url.pathname)) ||
+      url.hostname.endsWith('.hf.space')
+    )
+      return '互动应用：暂不支持提取文章正文'
+    const extension = /\.(pdf|json|txt)$/iu
+      .exec(url.pathname)?.[1]
+      ?.toLowerCase()
+    if (extension) return `暂不支持的文件：${extension.toUpperCase()}`
+  }
+  const format =
+    /Article response is not HTML:\s*(application\/pdf|application\/(?:[^;\s]+\+)?json|text\/plain)/iu.exec(
+      input.error ?? ''
+    )?.[1]
+  if (format) return `暂不支持的文件：${format}`
+  return undefined
+}
+
+export function isTwitterVideo(
+  platform: string,
+  kind: string,
+  value?: string
+): boolean {
+  if (platform !== 'x') return false
+  if (kind === 'video') return true
+  if (!value) return false
+  try {
+    const url = new URL(value)
+    return (
+      /^(?:www\.)?(?:x\.com|twitter\.com)$/iu.test(url.hostname) &&
+      /^\/i\/broadcasts\//u.test(url.pathname)
+    )
+  } catch {
+    return false
+  }
+}
+
 /** Confirmed destinations that cannot provide a standalone article body. */
 export function classifyNonArticlePage(value: string): string | undefined {
   let url: URL
@@ -16,6 +101,18 @@ export function classifyNonArticlePage(value: string): string | undefined {
   }
   const host = url.hostname.toLowerCase()
   const pathname = url.pathname.replace(/\/+$/, '') || '/'
+  if (
+    (host === 'claude.ai' || host === 'www.flova.ai' || host === 'flova.ai') &&
+    pathname === '/'
+  ) {
+    return '应用首页：工具入口，不是文章正文'
+  }
+  if (host === 'platform.heygen.com' && pathname === '/speech-to-speech') {
+    return '工具页面：语音处理界面，不是文章正文'
+  }
+  if (host === 'police-station.kimi.page' && pathname === '/') {
+    return '互动作品：三维场景，不是文章正文'
+  }
   if (host === 'events.ycombinator.com') {
     return '活动页：活动报名与介绍，不是文章正文'
   }
@@ -90,6 +187,8 @@ export interface DiscoveryBatch {
   items: DiscoveredItem[]
   providerId: string
   nextCursor?: string
+  rawCount?: number
+  oldestPublishedAt?: string
 }
 
 export interface SourceAdapter {
@@ -546,6 +645,16 @@ export function selectXCarrier(input: XCarrierInput): XCarrier {
     if (videoId) {
       const identity = normalizeYouTubeIdentity(videoId)
       return { kind: 'video', carrier: 'youtube', ...identity }
+    }
+  }
+  if (input.nativeVideo) {
+    return {
+      kind: 'video',
+      carrier: 'x-native-video',
+      platformIdentity: `x:${input.tweetId}`,
+      canonicalUrl:
+        input.tweetUrl ??
+        `https://x.com/i/status/${encodeURIComponent(input.tweetId)}`,
     }
   }
   const xArticle = (input.urls ?? []).find(
@@ -1010,6 +1119,9 @@ export function createTwitterApiIoProvider(options: {
   fetch?: typeof fetch
   baseUrl?: string
   captureResponse?: CaptureProviderResponse
+  userId?: string
+  onUserId?: (id: string) => Promise<void>
+  strictPagination?: boolean
 }): SourceAdapter {
   const fetcher = options.fetch ?? fetch
   const baseUrl = options.baseUrl ?? 'https://api.twitterapi.io'
@@ -1023,15 +1135,17 @@ export function createTwitterApiIoProvider(options: {
         'userName',
         request.source.externalIdentity.replace(/^@/u, '')
       )
-      const profile = await fetchJson(
-        fetcher,
-        profileUrl,
-        { headers },
-        {
-          providerId: 'twitterapi.io',
-          callback: options.captureResponse,
-        }
-      )
+      const profile = options.userId
+        ? { data: { id: options.userId } }
+        : await fetchJson(
+            fetcher,
+            profileUrl,
+            { headers },
+            {
+              providerId: 'twitterapi.io',
+              callback: options.captureResponse,
+            }
+          )
       const profileData = record(profile.data)
       const userId =
         text(profileData.id) ??
@@ -1042,6 +1156,7 @@ export function createTwitterApiIoProvider(options: {
           'invalid-response',
           'Twitter profile has no user id'
         )
+      if (!options.userId) await options.onUserId?.(userId)
       const timelineUrl = new URL('/twitter/user/tweet_timeline', baseUrl)
       timelineUrl.searchParams.set('userId', userId)
       const cursor = providerCursor(request.cursor, 'twitterapi.io')
@@ -1056,17 +1171,46 @@ export function createTwitterApiIoProvider(options: {
         }
       )
       const data = record(payload.data)
-      const capturedAt = new Date().toISOString()
-      const items = limitItems(
-        mapXTweets(array(data.tweets ?? payload.tweets), capturedAt),
-        request.limit
+      const rawTweetsValue = data.tweets ?? payload.tweets
+      if (!Array.isArray(rawTweetsValue))
+        throw new ProviderDiscoveryError(
+          'invalid-response',
+          'Twitter timeline has no tweet array'
+        )
+      const hasNextPage = data.has_next_page ?? payload.has_next_page
+      if (options.strictPagination && typeof hasNextPage !== 'boolean')
+        throw new ProviderDiscoveryError(
+          'invalid-response',
+          'Twitter timeline has no pagination flag'
+        )
+      if (
+        options.strictPagination &&
+        hasNextPage === true &&
+        !text(data.next_cursor ?? data.nextCursor ?? payload.next_cursor)
       )
+        throw new ProviderDiscoveryError(
+          'invalid-response',
+          'Twitter timeline has no next cursor'
+        )
+      const rawTweets = rawTweetsValue
+      const capturedAt = new Date().toISOString()
+      const items = limitItems(mapXTweets(rawTweets, capturedAt), request.limit)
       return {
         items,
+        rawCount: rawTweets.length,
+        oldestPublishedAt: rawTweets
+          .map((value) => {
+            const tweet = record(value)
+            return isoDate(tweet.createdAt ?? tweet.created_at)
+          })
+          .filter((value): value is string => Boolean(value))
+          .sort()[0],
         nextCursor: updateProviderCursor(
           request.cursor,
           'twitterapi.io',
-          text(data.next_cursor ?? data.nextCursor ?? payload.next_cursor)
+          hasNextPage === false
+            ? undefined
+            : text(data.next_cursor ?? data.nextCursor ?? payload.next_cursor)
         ),
       }
     },

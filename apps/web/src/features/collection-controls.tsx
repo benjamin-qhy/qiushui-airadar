@@ -4,6 +4,20 @@ import { Button } from '@/components/ui/button'
 import { api, post } from '@/lib/api'
 
 export interface CollectionRun {
+  id?: string
+  phase?: 'scanning' | 'analyzing' | 'translating' | 'finished'
+  scanningEndedAt?: string
+  phaseStartedAt?: Partial<
+    Record<'scanning' | 'analyzing' | 'translating', string>
+  >
+  translated?: number
+  translationFailed?: number
+  requests?: {
+    count: number
+    durationMs: number
+    estimatedCostUsd: number
+    unknownPriceCount: number
+  }
   status: 'running' | 'paused' | 'completed' | 'failed' | 'interrupted'
   startedAt: string
   updatedAt: string
@@ -19,10 +33,15 @@ export interface CollectionRun {
     existingCompleted?: number
     failed: number
     skipped: number
+    newlyInflow?: number
+    duplicates?: number
+    discoveryPending?: boolean
+    discoveryError?: string
   }>
 }
 
 export interface CollectionData {
+  history?: CollectionRun[]
   collection?: CollectionRun | null
   schedule?: {
     expression: string

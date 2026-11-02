@@ -1,6 +1,157 @@
 import { expect, it, vi } from 'vitest'
 
-import { createSingleTableSourceProvider } from './single-table-provider.js'
+import {
+  createSingleTableSourceProvider,
+  type ProviderRequestMetric,
+} from './single-table-provider.js'
+
+it('paces parallel API requests using the configured rate rather than a fixed four requests per second', async () => {
+  vi.useFakeTimers()
+  vi.setSystemTime(0)
+  const started: number[] = []
+  try {
+    const provider = createSingleTableSourceProvider({
+      twitterApiKey: 'test',
+      requestsPerSecond: 20,
+      fetch: async () => {
+        started.push(Date.now())
+        return Response.json({ tweets: [], has_next_page: false })
+      },
+    })
+    const source = {
+      id: 'test',
+      platform: 'x',
+      account_name: 'Test',
+      external_identity: 'test',
+      language: 'en' as const,
+      enabled: true,
+    }
+    const window = {
+      mode: 'search' as const,
+      since: '2026-11-01T00:00:00.000Z',
+      until: '2026-11-02T00:00:00.000Z',
+    }
+    const requests = Promise.all([
+      provider.discover(source, undefined, window),
+      provider.discover(source, undefined, window),
+    ])
+    await vi.advanceTimersByTimeAsync(100)
+    await requests
+    expect(started).toEqual([0, 50])
+  } finally {
+    vi.useRealTimers()
+  }
+})
+
+it('requests an explicit incremental time window without a profile call and bills raw returns before normalization', async () => {
+  const urls: string[] = []
+  const metrics: ProviderRequestMetric[] = []
+  const tweet = {
+    id: '123',
+    text: 'A practical AI workflow.',
+    createdAt: '2026-11-02T00:00:00.000Z',
+    author: { userName: 'OpenAI' },
+  }
+  const provider = createSingleTableSourceProvider({
+    twitterApiKey: 'fixture-secret',
+    fetch: async (input) => {
+      urls.push(String(input))
+      return Response.json({
+        tweets: [tweet, tweet],
+        has_next_page: true,
+        next_cursor: 'next-page',
+      })
+    },
+    onRequest: async (metric) => {
+      metrics.push(metric)
+    },
+  })
+  const page = await provider.discover(
+    {
+      id: 'x_openai',
+      platform: 'x',
+      account_name: 'OpenAI',
+      external_identity: 'OpenAI',
+      language: 'en',
+      enabled: true,
+    },
+    undefined,
+    {
+      mode: 'search',
+      since: '2026-11-01T00:00:00.000Z',
+      until: '2026-11-02T01:00:00.000Z',
+      cursor: 'previous-page',
+    }
+  )
+  expect(urls).toHaveLength(1)
+  const query = new URL(urls[0]!)
+  expect(query.pathname).toBe('/twitter/tweet/advanced_search')
+  expect(query.searchParams.get('query')).toBe(
+    'from:OpenAI include:nativeretweets -filter:replies since_time:1793491200 until_time:1793581200'
+  )
+  expect(query.searchParams.get('cursor')).toBe('previous-page')
+  expect(page.nextCursor).toBe('next-page')
+  expect(page.rawCount).toBe(2)
+  expect(page.items).toHaveLength(1)
+  expect(metrics[0]).toMatchObject({
+    returnedCount: 2,
+    estimatedCostUsd: 0.0003,
+    status: 200,
+  })
+  expect(JSON.stringify(page.request)).not.toContain('fixture-secret')
+})
+
+it('rejects incomplete search pagination metadata rather than declaring the window complete', async () => {
+  const provider = createSingleTableSourceProvider({
+    twitterApiKey: 'test',
+    fetch: async () => Response.json({ tweets: [] }),
+  })
+  await expect(
+    provider.discover(
+      {
+        id: 'test',
+        platform: 'x',
+        account_name: 'Test',
+        external_identity: 'test',
+        language: 'en',
+        enabled: true,
+      },
+      undefined,
+      {
+        mode: 'search',
+        since: '2026-11-01T00:00:00.000Z',
+        until: '2026-11-02T00:00:00.000Z',
+      }
+    )
+  ).rejects.toThrow('分页标志')
+})
+
+it('reuses the resolved user id across timeline pages', async () => {
+  const urls: string[] = []
+  const provider = createSingleTableSourceProvider({
+    twitterApiKey: 'test',
+    fetch: async (input) => {
+      urls.push(String(input))
+      return String(input).includes('/user/info')
+        ? Response.json({ data: { id: '1234' } })
+        : Response.json({ tweets: [], has_next_page: false })
+    },
+  })
+  const source = {
+    id: 'test',
+    platform: 'x',
+    account_name: 'Test',
+    external_identity: 'test',
+    language: 'en' as const,
+    enabled: true,
+  }
+  await provider.discover(source)
+  await provider.discover(source)
+  expect(urls.filter((url) => url.includes('/user/info'))).toHaveLength(1)
+  expect(
+    urls.filter((url) => url.includes('/user/tweet_timeline'))
+  ).toHaveLength(2)
+})
 
 it('uses local X video transcription only when a transcriber is supplied', async () => {
   const source = {
@@ -324,6 +475,6 @@ it('falls back to native HTTP when the configured X article provider fails', asy
   expect(articleEnricher).toHaveBeenCalledWith(articleUrl, expect.any(Function))
   expect(resolved.original.title).toBe('Native fallback article')
   expect(resolved.original.body).toContain('Complete native fallback body')
-  expect(resolved.calls).toHaveLength(1)
+  expect(resolved.calls).toHaveLength(3)
   expect(resolved.calls?.[0]?.response).toMatchObject({ status: 503 })
 })

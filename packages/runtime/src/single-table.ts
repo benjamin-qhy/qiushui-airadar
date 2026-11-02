@@ -84,12 +84,17 @@ export interface ContentRow {
   identity_key: string
   title: string
   original_title: string | null
+  original_format: OriginalContent['format']
+  canonical_url: string | null
+  video_duration_seconds: number | null
   content_kind: OriginalContent['kind']
   original_language: 'zh' | 'en' | 'unknown'
   summary: string | null
   keywords_text: string
   value_summary: string | null
   is_junk: number
+  is_unprocessed: number
+  unprocessed_reason: string | null
   junk_source: 'ai' | 'manual' | 'rule' | 'none'
   junk_reason: string | null
   total_score: number | null
@@ -182,6 +187,8 @@ CREATE TABLE IF NOT EXISTS contents (
   scoring_rule_json TEXT,
   analysis_extra_json TEXT NOT NULL DEFAULT '{}',
   is_junk INTEGER NOT NULL DEFAULT 0 CHECK (is_junk IN (0, 1)),
+  is_unprocessed INTEGER NOT NULL DEFAULT 0 CHECK (is_unprocessed IN (0, 1)),
+  unprocessed_reason TEXT,
   junk_source TEXT NOT NULL DEFAULT 'none' CHECK (junk_source IN ('ai', 'manual', 'rule', 'none')),
   junk_reason TEXT,
   junk_note TEXT,
@@ -446,6 +453,8 @@ export class SingleTableRepository {
         ).map((column) => column.name)
       )
       const migrations: Array<[string, string]> = [
+        ['is_unprocessed', 'INTEGER NOT NULL DEFAULT 0'],
+        ['unprocessed_reason', 'TEXT'],
         ['translation_status', "TEXT NOT NULL DEFAULT 'not_applicable'"],
         ['translation_skip_reason', 'TEXT'],
         ['translation_error', 'TEXT'],
@@ -641,8 +650,12 @@ export class SingleTableRepository {
           `UPDATE contents SET discovered_at=?, updated_at=?,
         source_account_name=?, published_at=COALESCE(?, published_at),
         video_duration_seconds=COALESCE(?, video_duration_seconds),
+        title=CASE WHEN english_markdown_path IS NULL AND chinese_markdown_path IS NULL THEN ? ELSE title END,
+        original_title=CASE WHEN english_markdown_path IS NULL AND chinese_markdown_path IS NULL THEN ? ELSE original_title END,
+        original_format=?, content_kind=?, original_language=?,
         chinese_markdown_path=COALESCE(chinese_markdown_path, ?),
         english_markdown_path=COALESCE(english_markdown_path, ?),
+        translation_status=CASE WHEN original_language='en' AND translation_status='not_applicable' THEN 'pending' ELSE translation_status END,
         process_status='processing', processing_stage='discovered', last_error=NULL WHERE id=?`
         )
         .run(
@@ -651,6 +664,11 @@ export class SingleTableRepository {
           input.sourceAccountName,
           input.publishedAt ?? null,
           input.videoDurationSeconds ?? null,
+          input.title,
+          input.originalTitle ?? null,
+          input.format,
+          input.kind,
+          input.language,
           chinesePath,
           englishPath,
           existing.id
@@ -685,7 +703,8 @@ export class SingleTableRepository {
     input: Omit<OriginalContent, 'body'>,
     reason: string,
     waitingForTranscription = false,
-    event?: Pick<LogEvent, 'request' | 'response'>
+    event?: Pick<LogEvent, 'request' | 'response'>,
+    discoveredOnly = false
   ): Promise<ContentRow> {
     const identity = contentIdentity({ ...input, body: '' })
     const existing = this.get(identity.key)
@@ -694,9 +713,11 @@ export class SingleTableRepository {
       ? path.posix.dirname(existing.execution_log_markdown_path)
       : contentDirectory({ ...input, body: '' }, identity, now)
     const logPath = path.posix.join(directory, '执行日志.md')
-    const status = waitingForTranscription
-      ? 'waiting-manual-transcription'
-      : 'failed'
+    const status = discoveredOnly
+      ? 'processing'
+      : waitingForTranscription
+        ? 'waiting-manual-transcription'
+        : 'failed'
     if (!existing) {
       this.database
         .prepare(
@@ -731,7 +752,7 @@ export class SingleTableRepository {
           now,
           logPath,
           status,
-          status,
+          discoveredOnly ? 'discovered' : status,
           String(redact(reason)),
           now,
           now
@@ -756,14 +777,84 @@ export class SingleTableRepository {
     }
     const row = this.get(identity.key)!
     await this.appendLog(row.id, {
-      action: 'enrich',
-      stage: status,
-      status: 'failed',
-      error: reason,
+      action: discoveredOnly ? 'discover' : 'enrich',
+      stage: discoveredOnly ? 'discovered' : status,
+      status: discoveredOnly ? 'succeeded' : 'failed',
+      error: discoveredOnly ? undefined : reason,
       request: event?.request,
       response: event?.response,
     })
     return row
+  }
+
+  async saveDiscovery(
+    input: Omit<OriginalContent, 'body'>
+  ): Promise<ContentRow> {
+    const existing = this.get(contentIdentity({ ...input, body: '' }).key)
+    if (existing) {
+      if (
+        existing.processing_stage === 'discovered' &&
+        !existing.english_markdown_path &&
+        !existing.chinese_markdown_path
+      ) {
+        const target = path.join(
+          this.dataRoot,
+          existing.execution_log_markdown_path
+        )
+        try {
+          await access(target)
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+          await atomicWrite(
+            target,
+            markdownDocument(
+              { content_id: existing.id, created_at: existing.created_at },
+              '# 执行日志\n'
+            )
+          )
+        }
+      }
+      return existing
+    }
+    return this.recordUnavailable(input, '', false, undefined, true)
+  }
+
+  reconcileDiscovery(
+    id: string,
+    original: OriginalContent
+  ): ContentRow | undefined {
+    const pending = this.getById(id)
+    const identity = contentIdentity(original)
+    const existing = this.get(identity.key)
+    if (!pending || pending.identity_key === identity.key)
+      return existing ?? pending
+    if (
+      pending.processing_stage !== 'discovered' ||
+      pending.english_markdown_path ||
+      pending.chinese_markdown_path
+    )
+      throw new Error(
+        'Only a pending discovery may change its resolved identity'
+      )
+    if (existing) {
+      // Only remove the empty, newly staged index row. Its discovery log is retained.
+      this.database.prepare('DELETE FROM contents WHERE id=?').run(id)
+      return existing
+    }
+    this.database
+      .prepare(
+        'UPDATE contents SET identity_kind=?, identity_value=?, identity_key=?, canonical_url=? WHERE id=?'
+      )
+      .run(
+        identity.kind,
+        identity.value,
+        identity.key,
+        original.canonicalUrl
+          ? canonicalizeContentUrl(original.canonicalUrl)
+          : null,
+        id
+      )
+    return this.getById(id)
   }
 
   private properties(
@@ -806,6 +897,8 @@ export class SingleTableRepository {
       summary: row.summary,
       keywords_text: row.keywords_text,
       value_summary: row.value_summary,
+      is_unprocessed: Boolean(row.is_unprocessed),
+      unprocessed_reason: row.unprocessed_reason,
       is_junk: Boolean(row.is_junk),
       junk_reason: row.junk_reason,
       total_score: row.total_score,
@@ -1066,6 +1159,7 @@ export class SingleTableRepository {
       !row ||
       row.original_language !== 'en' ||
       row.is_junk ||
+      row.is_unprocessed ||
       (!metadata?.manual &&
         (row.total_score == null || row.total_score < minimumTotalScore))
     )
@@ -1193,7 +1287,9 @@ export class SingleTableRepository {
     const now = new Date().toISOString()
     this.database
       .prepare(
-        `UPDATE contents SET is_junk=?, junk_source='manual', junk_reason=?, junk_note=?,
+        `UPDATE contents SET is_unprocessed=CASE WHEN ?=1 THEN 0 ELSE is_unprocessed END,
+        unprocessed_reason=CASE WHEN ?=1 THEN NULL ELSE unprocessed_reason END,
+        is_junk=?, junk_source='manual', junk_reason=?, junk_note=?,
       junk_updated_at=?, value_summary=CASE WHEN ?=1 THEN NULL ELSE value_summary END,
       interest_fit_level=CASE WHEN ?=1 THEN NULL ELSE interest_fit_level END,
       interest_fit_reason=CASE WHEN ?=1 THEN NULL ELSE interest_fit_reason END,
@@ -1208,6 +1304,8 @@ export class SingleTableRepository {
       updated_at=? WHERE id=?`
       )
       .run(
+        isJunk ? 1 : 0,
+        isJunk ? 1 : 0,
         isJunk ? 1 : 0,
         reason ?? null,
         note ?? null,
@@ -1245,7 +1343,8 @@ export class SingleTableRepository {
         `UPDATE contents SET is_junk=1, junk_source='rule', junk_reason=?,
        junk_updated_at=?, recommendation='none', total_score=NULL,
        process_status='completed', processing_stage='completed',
-       last_error=NULL, last_processed_at=?, updated_at=? WHERE id=?`
+       translation_status='skipped', translation_skip_reason='rule_junk',
+       translation_error=NULL, last_error=NULL, last_processed_at=?, updated_at=? WHERE id=?`
       )
       .run(reason, now, now, now, id)
     await this.refreshFrontmatter(id)
@@ -1257,6 +1356,65 @@ export class SingleTableRepository {
       response: { updated: true },
     })
     return this.getById(id)!
+  }
+
+  async setUnprocessed(id: string, reason: string): Promise<ContentRow> {
+    const row = this.getById(id)
+    if (!row) throw new Error('Content not found')
+    // Keep human decisions and all previously completed AI classifications.
+    if (
+      row.junk_source === 'manual' ||
+      row.junk_source === 'ai' ||
+      (row.process_status === 'completed' &&
+        row.junk_source !== 'rule' &&
+        !row.is_unprocessed)
+    )
+      return row
+    if (row.is_unprocessed && row.unprocessed_reason === reason) return row
+    this.database
+      .prepare(
+        `UPDATE contents SET is_unprocessed=1, unprocessed_reason=?,
+      is_junk=0, junk_source='none', junk_reason=NULL, junk_note=NULL, junk_updated_at=NULL,
+      recommendation='none', total_score=NULL, process_status='completed', processing_stage='completed',
+      translation_status='skipped', translation_skip_reason='unprocessed', translation_error=NULL,
+      last_error=NULL, updated_at=? WHERE id=?`
+      )
+      .run(reason, new Date().toISOString(), id)
+    await this.refreshFrontmatter(id)
+    await this.appendLog(id, {
+      action: 'processing-excluded',
+      stage: 'completed',
+      status: 'succeeded',
+      request: { reason },
+      response: { category: 'unprocessed' },
+    })
+    return this.getById(id)!
+  }
+
+  processingPolicyCandidates(): ContentRow[] {
+    return this.database
+      .prepare(
+        `SELECT * FROM contents WHERE is_unprocessed=0
+      AND junk_source NOT IN ('manual','ai') AND (process_status!='completed' OR junk_source='rule')`
+      )
+      .all() as unknown as ContentRow[]
+  }
+
+  unprocessedRows(keyword?: string): ContentRow[] {
+    // This dedicated module must not lose historical rows behind the general feed's 500-row window.
+    const rows = this.database
+      .prepare(
+        'SELECT * FROM contents WHERE is_unprocessed=1 ORDER BY first_inflow_at DESC'
+      )
+      .all() as unknown as ContentRow[]
+    const word = keyword?.trim().toLowerCase()
+    return word
+      ? rows.filter((row) =>
+          `${row.title} ${row.unprocessed_reason ?? ''} ${row.source_account_name ?? ''}`
+            .toLowerCase()
+            .includes(word)
+        )
+      : rows
   }
 
   setRead(id: string, read: boolean): void {
@@ -1283,6 +1441,7 @@ export class SingleTableRepository {
     query: {
       keyword?: string
       isJunk?: boolean
+      isUnprocessed?: boolean
       recommendation?: Recommendation
       processStatus?:
         'processing' | 'completed' | 'failed' | 'waiting-manual-transcription'
@@ -1309,6 +1468,10 @@ export class SingleTableRepository {
     if (query.isJunk !== undefined) {
       clauses.push('is_junk=?')
       params.push(query.isJunk ? 1 : 0)
+    }
+    if (query.isUnprocessed !== undefined) {
+      clauses.push('is_unprocessed=?')
+      params.push(query.isUnprocessed ? 1 : 0)
     }
     if (query.recommendation) {
       clauses.push('recommendation=?')

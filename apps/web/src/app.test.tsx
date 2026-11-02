@@ -37,6 +37,7 @@ describe('complete web shell', () => {
     ['config', '系统配置'],
     ['models', '模型管理'],
     ['exceptions', '异常数据'],
+    ['unprocessed', '未处理'],
   ])('opens the requested %s page after a full reload', (page, title) => {
     vi.stubGlobal('window', {
       location: { search: `?page=${page}` },
@@ -427,4 +428,24 @@ describe('complete web shell', () => {
       favorite,
     ])
   })
+})
+
+it('keeps deliberately unprocessed content out of daily, all, exceptions and junk while rendering its reason', () => {
+  const excluded: FeedItem = {
+    ...item,
+    id: 'excluded-audio',
+    kind: 'audio',
+    processStatus: 'unprocessed',
+    totalScore: null,
+    recommendation: 'none',
+    unprocessedReason: '语音直播：Twitter Spaces',
+    junk: { isJunk: false, source: 'none' },
+  }
+  for (const scope of ['daily', 'all', 'exceptions', 'junk'] as const)
+    expect(filterContentScope([excluded], scope)).toEqual([])
+  expect(filterContentScope([excluded], 'unprocessed')).toEqual([excluded])
+  const markup = renderToStaticMarkup(<ContentCard item={excluded} />)
+  expect(markup).toContain('未处理')
+  expect(markup).toContain('Twitter Spaces')
+  expect(markup).not.toContain('垃圾内容 ·')
 })

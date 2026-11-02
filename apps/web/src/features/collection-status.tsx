@@ -18,6 +18,16 @@ const labels = {
   failed: '本轮执行失败',
   interrupted: '本轮采集中断',
 }
+const phaseLabels = {
+  scanning: '正在扫描并入库',
+  analyzing: '扫描已完成，后台正在分析评分',
+  translating: '评分已完成，正在翻译达标内容',
+  finished: '本轮已结束',
+}
+const duration = (from?: string, to?: string) =>
+  from && to
+    ? `${Math.max(0, (Date.parse(to) - Date.parse(from)) / 60_000).toFixed(1)} 分钟`
+    : '—'
 
 export function CollectionStatus({ initial }: { initial: CollectionData }) {
   const [data, setData] = useState(initial)
@@ -84,14 +94,18 @@ export function CollectionStatus({ initial }: { initial: CollectionData }) {
         <div className='flex flex-wrap items-start justify-between gap-4'>
           <div>
             <h2 className='text-2xl font-semibold'>
-              {run ? labels[run.status] : '暂无采集任务记录'}
+              {run
+                ? running && run.phase
+                  ? phaseLabels[run.phase]
+                  : labels[run.status]
+                : '暂无采集任务记录'}
             </h2>
             <p className='mt-2 text-sm text-muted-foreground'>
               {current
                 ? `${running ? '当前信源' : run?.status === 'paused' ? '暂停在信源' : '最后处理信源'}：${current.name}`
                 : run
                   ? '本轮信源处理情况见下方列表'
-                  : '手工执行后，将记录本轮进度；历史任务无法还原。'}
+                  : '执行采集后，将保留每轮进度和历史统计。'}
             </p>
           </div>
           <CollectionControls data={data} onChanged={setData} />
@@ -132,7 +146,8 @@ export function CollectionStatus({ initial }: { initial: CollectionData }) {
           <>
             <div className='flex justify-between text-sm'>
               <span>
-                已结束 {done} / {total} 个信源
+                {run.phase ? '扫描阶段已结束' : '已结束'} {done} / {total}{' '}
+                个信源
               </span>
               <span>剩余 {total - done} 个</span>
             </div>
@@ -152,6 +167,17 @@ export function CollectionStatus({ initial }: { initial: CollectionData }) {
             <div className='grid grid-cols-2 gap-4 border-t pt-4 sm:grid-cols-5'>
               {[
                 ['本轮扫描到（含已有）', totals?.discovered],
+                ...(run.phase
+                  ? [
+                      [
+                        '新增入库',
+                        run.sources.reduce(
+                          (sum, source) => sum + (source.newlyInflow ?? 0),
+                          0
+                        ),
+                      ] as const,
+                    ]
+                  : []),
                 ...(hasBreakdown
                   ? ([
                       ['本轮新处理成功', totals?.newlyCompleted],
@@ -160,6 +186,12 @@ export function CollectionStatus({ initial }: { initial: CollectionData }) {
                   : ([['处理成功（含已有）', totals?.completed]] as const)),
                 ['异常 / 待处理', totals?.failed],
                 ['跳过已有或排除项', totals?.skipped],
+                ...(run.phase
+                  ? ([
+                      ['翻译完成', run.translated ?? 0],
+                      ['翻译失败', run.translationFailed ?? 0],
+                    ] as const)
+                  : []),
               ].map(([name, value]) => (
                 <div key={name}>
                   <div className='text-sm text-muted-foreground'>{name}</div>
@@ -169,7 +201,7 @@ export function CollectionStatus({ initial }: { initial: CollectionData }) {
             </div>
             {hasBreakdown && (
               <p className='text-xs text-muted-foreground'>
-                扫描到的是信源返回的条目数，包含以前采集的内容；本轮真正新增并处理成功的数量请看“本轮新处理成功”。
+                扫描量包含已有内容；新增入库不等于分析完成。整轮评分后，仅翻译达到所设分数的非垃圾外文内容。
               </p>
             )}
             {!hasBreakdown && (
@@ -238,15 +270,22 @@ export function CollectionStatus({ initial }: { initial: CollectionData }) {
                   >
                     <td className='p-3'>{source.name}</td>
                     <td className='p-3'>
-                      {source.status === 'pending'
-                        ? '等待执行'
-                        : source.status === 'running'
-                          ? running
-                            ? '正在执行'
-                            : '未完成'
-                          : source.failed
-                            ? '已结束，有异常'
-                            : '已结束'}
+                      {source.discoveryPending
+                        ? '扫描待补齐'
+                        : source.status === 'pending'
+                          ? '等待执行'
+                          : source.status === 'running'
+                            ? running
+                              ? '正在执行'
+                              : '未完成'
+                            : source.failed
+                              ? '已结束，有异常'
+                              : '已结束'}
+                      {source.discoveryError && (
+                        <p className='mt-1 text-xs text-destructive'>
+                          {source.discoveryError}
+                        </p>
+                      )}
                     </td>
                     {[
                       source.discovered,
@@ -258,6 +297,94 @@ export function CollectionStatus({ initial }: { initial: CollectionData }) {
                         {value}
                       </td>
                     ))}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      )}
+      {data.history && data.history.length > 0 && (
+        <section className='space-y-3 border-t pt-5'>
+          <h2 className='font-semibold'>采集历史</h2>
+          <p className='text-sm text-muted-foreground'>
+            每轮记录永久保存；此处显示最近100轮。费用为已知接口的标价估算，不含AI，未知单价及失败扣费另行核对。
+          </p>
+          <div className='overflow-x-auto'>
+            <table className='w-full text-left text-sm'>
+              <caption className='sr-only'>
+                按北京时间显示的采集运行历史
+              </caption>
+              <thead>
+                <tr>
+                  {[
+                    '开始时间',
+                    '状态',
+                    '扫描',
+                    '新增入库',
+                    '新处理成功',
+                    '翻译完成 / 失败',
+                    '扫描耗时',
+                    '总耗时',
+                    '接口费用估算',
+                  ].map((label) => (
+                    <th key={label} scope='col' className='p-3'>
+                      {label}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {data.history.map((record) => (
+                  <tr
+                    key={record.id ?? record.startedAt}
+                    className='hover:bg-foreground/[0.025]'
+                  >
+                    <td className='p-3 whitespace-nowrap'>
+                      {time(record.startedAt)}
+                    </td>
+                    <td className='p-3'>
+                      {record.sources.some((source) => source.discoveryPending)
+                        ? '待补齐'
+                        : labels[record.status]}
+                    </td>
+                    <td className='p-3'>
+                      {record.sources.reduce(
+                        (sum, source) => sum + source.discovered,
+                        0
+                      )}
+                    </td>
+                    <td className='p-3'>
+                      {record.phase
+                        ? record.sources.reduce(
+                            (sum, source) => sum + (source.newlyInflow ?? 0),
+                            0
+                          )
+                        : '—'}
+                    </td>
+                    <td className='p-3'>
+                      {record.sources.reduce(
+                        (sum, source) => sum + (source.newlyCompleted ?? 0),
+                        0
+                      )}
+                    </td>
+                    <td className='p-3'>
+                      {record.translated ?? 0} / {record.translationFailed ?? 0}
+                    </td>
+                    <td className='p-3 whitespace-nowrap'>
+                      {duration(
+                        record.phaseStartedAt?.scanning,
+                        record.scanningEndedAt
+                      )}
+                    </td>
+                    <td className='p-3 whitespace-nowrap'>
+                      {duration(record.startedAt, record.endedAt)}
+                    </td>
+                    <td className='p-3'>
+                      {record.requests
+                        ? `$${record.requests.estimatedCostUsd.toFixed(5)}${record.requests.unknownPriceCount ? '（部分待核价）' : ''}`
+                        : '无调用计费记录'}
+                    </td>
                   </tr>
                 ))}
               </tbody>

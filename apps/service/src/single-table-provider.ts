@@ -1,3 +1,6 @@
+import { readFile, writeFile, mkdir, rename } from 'node:fs/promises'
+import path from 'node:path'
+import { randomUUID } from 'node:crypto'
 import {
   enrichArticle,
   RssAdapter,
@@ -14,6 +17,8 @@ import {
   fetchTwitterApiIoArticle,
   isXArticleUrl,
   normalizeYouTubeIdentity,
+  mapXTweets,
+  fetchJson,
   type DiscoveredItem,
   type SourceAdapter,
 } from '@qiushui-airadar/source-adapters'
@@ -31,6 +36,20 @@ interface ProviderOptions {
   articleEnricher?: typeof enrichArticle
   xVideoTranscriber?: (url: string) => Promise<string>
   providerRoutes?: Partial<ProviderRoutes>
+  onRequest?: (metric: ProviderRequestMetric) => Promise<void>
+  userIdCacheFile?: string
+  maxRetries?: number
+  requestsPerSecond?: number
+}
+
+export interface ProviderRequestMetric {
+  at: string
+  sourceId: string
+  endpoint: string
+  status?: number
+  durationMs: number
+  returnedCount?: number
+  estimatedCostUsd?: number
 }
 
 function routeFailure(capability: string, errors: string[]): Error {
@@ -41,9 +60,22 @@ function routeFailure(capability: string, errors: string[]): Error {
 
 function auditFetch(
   fetcher: typeof fetch,
-  calls: Array<{ request: unknown; response: unknown }>
+  calls: Array<{ request: unknown; response: unknown }>,
+  sourceId: string,
+  onRequest?: ProviderOptions['onRequest'],
+  maxRetries = 2
 ): typeof fetch {
-  return async (input, init) => {
+  async function recordMetric(metric: ProviderRequestMetric) {
+    try {
+      await onRequest?.(metric)
+    } catch (error) {
+      throw Object.assign(
+        new Error('请求统计写入失败，已停止额外重试', { cause: error }),
+        { code: 'AUDIT_WRITE_FAILED' }
+      )
+    }
+  }
+  const attempt: typeof fetch = async (input, init) => {
     const request = input instanceof Request ? input : undefined
     const method = init?.method ?? request?.method ?? 'GET'
     const url = String(request?.url ?? input)
@@ -53,11 +85,45 @@ function auditFetch(
         ? await request.clone().text()
         : undefined
     const headers = Object.fromEntries(
-      new Headers(init?.headers ?? request?.headers).entries()
+      [...new Headers(init?.headers ?? request?.headers).entries()].map(
+        ([key, value]) => [
+          key,
+          /authorization|api.?key|cookie/iu.test(key) ? '[REDACTED]' : value,
+        ]
+      )
     )
+    const started = Date.now()
+    let metric: ProviderRequestMetric = {
+      at: new Date().toISOString(),
+      sourceId,
+      endpoint: new URL(url).origin + new URL(url).pathname,
+      durationMs: 0,
+    }
     try {
       const response = await fetcher(input, init)
       const responseBody = await response.clone().text()
+      metric.status = response.status
+      try {
+        const payload = JSON.parse(responseBody)
+        const tweets = payload.tweets ?? payload.data?.tweets
+        if (Array.isArray(tweets)) metric.returnedCount = tweets.length
+      } catch {
+        /* Non-JSON responses are audited without a price estimate. */
+      }
+      if (response.ok && new URL(url).hostname === 'api.twitterapi.io') {
+        const endpoint = new URL(url).pathname
+        if (endpoint === '/twitter/user/info') metric.estimatedCostUsd = 0.00018
+        else if (endpoint === '/twitter/article')
+          metric.estimatedCostUsd = 0.001
+        else if (metric.returnedCount !== undefined)
+          metric.estimatedCostUsd = Math.max(1, metric.returnedCount) * 0.00015
+      } else if (
+        response.ok &&
+        new URL(url).hostname === 'api.tikhub.io' &&
+        new URL(url).pathname === '/api/v1/youtube/web_v2/get_video_captions'
+      ) {
+        metric.estimatedCostUsd = 0.008
+      }
       calls.push({
         request: { method, url, headers, body },
         response: {
@@ -76,6 +142,31 @@ function auditFetch(
         },
       })
       throw error
+    } finally {
+      metric = { ...metric, durationMs: Date.now() - started }
+      await recordMetric(metric)
+    }
+  }
+  return async (input, init) => {
+    for (let retry = 0; ; retry++) {
+      try {
+        const response = await attempt(input, init)
+        if (
+          retry >= maxRetries ||
+          (response.status !== 429 && response.status < 500)
+        )
+          return response
+      } catch (error) {
+        if (
+          retry >= maxRetries ||
+          init?.signal?.aborted ||
+          (error as NodeJS.ErrnoException).code === 'AUDIT_WRITE_FAILED'
+        )
+          throw error
+      }
+      await new Promise((resolve) =>
+        setTimeout(resolve, Math.min(2000, 250 * 2 ** retry))
+      )
     }
   }
 }
@@ -106,12 +197,112 @@ function accountName(source: ConfiguredSource): string {
 export function createSingleTableSourceProvider(
   options: ProviderOptions
 ): SingleTableSourceProvider {
-  const fetcher = options.fetch ?? fetch
+  const rawFetch = options.fetch ?? fetch
+  let nextRequestAt = 0
+  // Retries share the configured request-start rate with normal requests.
+  const fetcher: typeof fetch = async (input, init) => {
+    const now = Date.now()
+    const reserved = Math.max(now, nextRequestAt)
+    nextRequestAt =
+      reserved +
+      (options.fetch && options.requestsPerSecond === undefined
+        ? 0
+        : 1000 / (options.requestsPerSecond ?? 4))
+    if (reserved > now)
+      await new Promise((resolve) => setTimeout(resolve, reserved - now))
+    return rawFetch(input, {
+      ...init,
+      signal: AbortSignal.any([
+        ...(init?.signal ? [init.signal] : []),
+        AbortSignal.timeout(20_000),
+      ]),
+    })
+  }
   const discovered = new Map<string, DiscoveredItem>()
+  const userIds = new Map<string, string>()
+  const cacheReady = options.userIdCacheFile
+    ? readFile(options.userIdCacheFile, 'utf8')
+        .then((text) => {
+          for (const [key, value] of Object.entries(JSON.parse(text)))
+            if (typeof value === 'string') userIds.set(key, value)
+        })
+        .catch((error: unknown) => {
+          if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+        })
+    : Promise.resolve()
+  let savingIds = Promise.resolve()
   return {
-    async discover(source, limit) {
+    async discover(source, limit, window) {
+      await cacheReady
       const calls: Array<{ request: unknown; response: unknown }> = []
-      const trackedFetch = auditFetch(fetcher, calls)
+      const trackedFetch = auditFetch(
+        fetcher,
+        calls,
+        source.id,
+        options.onRequest,
+        options.maxRetries
+      )
+      if (source.platform === 'x' && window?.mode === 'search') {
+        if (
+          !options.twitterApiKey ||
+          !(
+            options.providerRoutes?.x_list ?? defaultProviderRoutes.x_list
+          ).includes('twitterapi.io')
+        )
+          throw new Error(
+            '增量搜索需要可用的 TwitterAPI.io；保留采集位置，可切换时间线模式核查。'
+          )
+        const url = new URL(
+          'https://api.twitterapi.io/twitter/tweet/advanced_search'
+        )
+        const handle = source.external_identity.replace(/^@/u, '')
+        if (!/^[a-z0-9_]{1,15}$/iu.test(handle)) throw new Error('X 用户名无效')
+        url.searchParams.set(
+          'query',
+          `from:${handle} include:nativeretweets -filter:replies since_time:${Math.floor(Date.parse(window.since) / 1000)} until_time:${Math.ceil(Date.parse(window.until) / 1000)}`
+        )
+        url.searchParams.set('queryType', 'Latest')
+        if (window.cursor) url.searchParams.set('cursor', window.cursor)
+        const payload = await fetchJson(trackedFetch, url, {
+          headers: { 'X-API-Key': options.twitterApiKey },
+        })
+        const raw =
+          payload.tweets ??
+          (payload.data as { tweets?: unknown[] } | undefined)?.tweets
+        if (!Array.isArray(raw))
+          throw new Error('Twitter 搜索响应缺少帖子列表，未推进位置')
+        if (typeof payload.has_next_page !== 'boolean')
+          throw new Error('Twitter 搜索响应缺少分页标志，未推进位置')
+        const items = mapXTweets(raw, new Date().toISOString()).map((item) => {
+          discovered.set(`${source.id}:${item.externalId}`, item)
+          return {
+            externalId: item.externalId,
+            url: item.content.canonicalUrl,
+            title: item.content.title,
+            publishedAt: item.publishedAt,
+            body: item.description,
+            interaction: item.interaction,
+            kind: item.content.kind,
+            videoDurationSeconds: item.video?.durationSeconds,
+            opaque: item,
+          }
+        })
+        const cursor = payload.next_cursor
+        if (
+          payload.has_next_page === true &&
+          (typeof cursor !== 'string' || !cursor)
+        )
+          throw new Error('Twitter 搜索分页响应无效，未推进位置')
+        return {
+          providerId: 'twitterapi.io',
+          items,
+          rawCount: raw.length,
+          nextCursor:
+            payload.has_next_page === true ? String(cursor) : undefined,
+          request: calls.map((call) => call.request),
+          response: calls.map((call) => call.response),
+        }
+      }
       if (source.platform === 'rss') {
         if (
           !(
@@ -127,6 +318,7 @@ export function createSingleTableSourceProvider(
           providerId: 'native-rss',
           items: batch.items.map((item) => ({
             externalId: item.externalId,
+            mediaType: item.mediaType,
             url: item.canonicalUrl,
             title: item.title,
             publishedAt: item.publishedAt,
@@ -150,6 +342,24 @@ export function createSingleTableSourceProvider(
               adapter = createTwitterApiIoProvider({
                 apiKey: options.twitterApiKey,
                 fetch: trackedFetch,
+                userId: userIds.get(source.external_identity.toLowerCase()),
+                strictPagination: Boolean(window),
+                async onUserId(id) {
+                  userIds.set(source.external_identity.toLowerCase(), id)
+                  if (!options.userIdCacheFile) return
+                  const file = options.userIdCacheFile
+                  savingIds = savingIds.then(async () => {
+                    await mkdir(path.dirname(file), { recursive: true })
+                    const temporary = `${file}.${randomUUID()}.tmp`
+                    await writeFile(
+                      temporary,
+                      JSON.stringify(Object.fromEntries(userIds)),
+                      { mode: 0o600 }
+                    )
+                    await rename(temporary, file)
+                  })
+                  await savingIds
+                },
               })
             } else {
               if (!options.tikHubToken)
@@ -170,6 +380,7 @@ export function createSingleTableSourceProvider(
                 status: 'enabled',
               },
               limit,
+              cursor: window?.cursor,
             })
             break
           } catch (error) {
@@ -227,6 +438,7 @@ export function createSingleTableSourceProvider(
                 status: 'enabled',
               },
               limit,
+              cursor: window?.cursor,
             })
             break
           } catch (error) {
@@ -249,6 +461,7 @@ export function createSingleTableSourceProvider(
           kind: item.content.kind,
           format: item.content.kind === 'article' ? 'plain_text' : 'plain_text',
           videoDurationSeconds: item.video?.durationSeconds,
+          opaque: item,
         }
       })
       return {
@@ -256,12 +469,28 @@ export function createSingleTableSourceProvider(
         items,
         request: calls.map((call) => call.request),
         response: calls.map((call) => call.response),
+        nextCursor: batch.nextCursor,
+        rawCount: batch.rawCount,
+        oldestPublishedAt:
+          batch.oldestPublishedAt ??
+          batch.items
+            .map((item) => item.publishedAt)
+            .filter((value): value is string => Boolean(value))
+            .sort()[0],
       }
     },
     async resolve(source: ConfiguredSource, item: DiscoveredContent) {
       const calls: Array<{ request: unknown; response: unknown }> = []
-      const trackedFetch = auditFetch(fetcher, calls)
-      const sourceItem = discovered.get(`${source.id}:${item.externalId}`)
+      const trackedFetch = auditFetch(
+        fetcher,
+        calls,
+        source.id,
+        options.onRequest,
+        options.maxRetries
+      )
+      const sourceItem =
+        discovered.get(`${source.id}:${item.externalId}`) ??
+        (item.opaque as DiscoveredItem | undefined)
       let body = item.body?.trim() ?? ''
       let title = item.title ?? ''
       let url = item.url

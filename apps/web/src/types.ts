@@ -1,6 +1,7 @@
 export type PageKey =
   | 'daily'
   | 'all'
+  | 'unprocessed'
   | 'exceptions'
   | 'favorites'
   | 'junk'
@@ -51,7 +52,7 @@ export interface FeedItem {
   scores: Record<string, unknown>
   totalScore: number | null
   recommendation: 'core' | 'explore' | 'none'
-  kind?: 'short_post' | 'video' | 'image_post' | 'article'
+  kind?: 'short_post' | 'video' | 'audio' | 'image_post' | 'article'
   source?: { id: string; name: string; type: string; language?: 'en' | 'zh' }
   images?: Array<{ order?: number; url: string }>
   quotedPost?: {
@@ -67,8 +68,13 @@ export interface FeedItem {
     thumbnailUrl?: string
     mediaUrl?: string
   }
+  unprocessedReason?: string
   processStatus:
-    'processing' | 'completed' | 'failed' | 'waiting-manual-transcription'
+    | 'processing'
+    | 'completed'
+    | 'failed'
+    | 'waiting-manual-transcription'
+    | 'unprocessed'
   originalStatus?: unknown
   read: boolean
   utilizationActions: UtilizationAction[]

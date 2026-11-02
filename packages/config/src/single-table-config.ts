@@ -113,15 +113,47 @@ export const profileConfigSchema = z.object({
   exclusions: z.array(z.string().min(1)),
 })
 
+export const collectionConcurrencySchema = z.object({
+  scan_concurrency: z.number().int().positive(),
+  processing_concurrency: z.number().int().positive(),
+  translation_concurrency: z.number().int().positive(),
+})
+
 export const runtimeConfigSchema = z.object({
   timezone: z.literal('Asia/Shanghai'),
-  collection: z.object({
-    schedule: z.string().min(1),
-    list_pages: z.literal(1),
-    max_retries: z.number().int().min(0).max(10),
-    serial_sources: z.literal(true),
-  }),
+  collection: z
+    .object({
+      schedule: z.string().min(1),
+      // Read deprecated v1 fields for upgrades; the explicit v2 limits below govern execution.
+      list_pages: z.literal(1).optional(),
+      max_retries: z.number().int().min(0).max(10),
+      serial_sources: z.literal(true).optional(),
+      mode: z.enum(['incremental', 'timeline']).default('incremental'),
+      process_twitter_videos: z.boolean().default(false),
+      process_media: z.boolean().optional(),
+      scan_concurrency:
+        collectionConcurrencySchema.shape.scan_concurrency.default(4),
+      processing_concurrency:
+        collectionConcurrencySchema.shape.processing_concurrency.default(3),
+      translation_concurrency:
+        collectionConcurrencySchema.shape.translation_concurrency.optional(),
+      requests_per_second: z.number().positive().default(4),
+      overlap_hours: z.number().int().min(1).max(72).default(6),
+      reconciliation_days: z.number().int().min(1).max(30).default(7),
+      maximum_pages_per_source: z.number().int().min(1).max(200).default(10),
+    })
+    .transform((value) => ({
+      ...value,
+      process_media: value.process_media ?? value.process_twitter_videos,
+      // Old installations shared the analysis limit with translation.
+      translation_concurrency:
+        value.translation_concurrency ?? value.processing_concurrency,
+    })),
 })
+
+export type CollectionSettings = z.output<
+  typeof runtimeConfigSchema
+>['collection']
 
 export const sourcesConfigSchema = z.object({
   sources: z.array(
@@ -294,6 +326,35 @@ export async function initializeSingleTableConfig(
     )
     if (migrated !== content) await saveConfigFile(configRoot, name, migrated)
   }
+  // Upgrade the former shipped 10-point default once; later user edits remain intact.
+  const marker = path.join(
+    configRoot,
+    'local',
+    'incremental-collection-v1.json'
+  )
+  try {
+    await readFile(marker, 'utf8')
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+    await mkdir(path.dirname(marker), { recursive: true })
+    const analysisText = await readFile(
+      path.join(configRoot, 'analysis.yaml'),
+      'utf8'
+    )
+    const analysis = analysisConfigSchema.parse(parseYaml(analysisText))
+    if (analysis.translation.minimum_total_score === 10) {
+      await writeFile(
+        path.join(configRoot, 'local', 'analysis-before-incremental.yaml'),
+        analysisText,
+        { mode: 0o600 }
+      )
+      analysis.translation.minimum_total_score = 60
+      await saveConfigFile(configRoot, 'analysis.yaml', stringifyYaml(analysis))
+    }
+    await writeFile(marker, JSON.stringify({ at: new Date().toISOString() }), {
+      mode: 0o600,
+    })
+  }
   return configRoot
 }
 
@@ -379,6 +440,68 @@ export async function saveAnalysisModelConfig(
   )
 }
 
+export async function saveTranslationThreshold(
+  configRoot: string,
+  minimumScore: number
+): Promise<void> {
+  const current = await parseFile(
+    path.join(configRoot, 'analysis.yaml'),
+    analysisConfigSchema
+  )
+  current.translation.minimum_total_score = z
+    .number()
+    .int()
+    .min(0)
+    .max(100)
+    .parse(minimumScore)
+  await saveEditableConfigFile(
+    configRoot,
+    'analysis.yaml',
+    stringifyYaml(current)
+  )
+}
+
+export async function saveCollectionConcurrency(
+  configRoot: string,
+  input: z.output<typeof collectionConcurrencySchema> & {
+    requests_per_second?: number
+  }
+): Promise<void> {
+  const values = collectionConcurrencySchema.parse(input)
+  const current = await parseFile(
+    path.join(configRoot, 'runtime.yaml'),
+    runtimeConfigSchema
+  )
+  if (input.requests_per_second !== undefined)
+    current.collection.requests_per_second = z
+      .number()
+      .positive()
+      .parse(input.requests_per_second)
+  current.collection = { ...current.collection, ...values }
+  await saveEditableConfigFile(
+    configRoot,
+    'runtime.yaml',
+    stringifyYaml(current)
+  )
+}
+
+export async function saveTwitterVideoPolicy(
+  configRoot: string,
+  enabled: boolean
+) {
+  const current = await parseFile(
+    path.join(configRoot, 'runtime.yaml'),
+    runtimeConfigSchema
+  )
+  current.collection.process_media = z.boolean().parse(enabled)
+  current.collection.process_twitter_videos = enabled
+  await saveEditableConfigFile(
+    configRoot,
+    'runtime.yaml',
+    stringifyYaml(current)
+  )
+}
+
 export async function saveAnalysisTranscriptionConfig(
   configRoot: string,
   auto: boolean
@@ -401,6 +524,14 @@ export interface SourceState {
       last_seen_content_id?: string
       last_collected_at?: string
       enabled_override?: boolean | null
+      discovered_until?: string
+      next_reconcile_at?: string
+      pending_window?: {
+        mode: 'search' | 'timeline'
+        since: string
+        until: string
+        cursor?: string
+      }
     }
   >
 }
@@ -419,6 +550,16 @@ export async function loadSourceState(
             last_seen_content_id: z.string().optional(),
             last_collected_at: z.iso.datetime().optional(),
             enabled_override: z.boolean().nullable().optional(),
+            discovered_until: z.iso.datetime().optional(),
+            next_reconcile_at: z.iso.datetime().optional(),
+            pending_window: z
+              .object({
+                mode: z.enum(['search', 'timeline']),
+                since: z.iso.datetime(),
+                until: z.iso.datetime(),
+                cursor: z.string().optional(),
+              })
+              .optional(),
           })
         ),
       })

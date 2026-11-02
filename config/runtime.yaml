@@ -1,6 +1,13 @@
 timezone: Asia/Shanghai
 collection:
   schedule: '0 4 * * *'
-  list_pages: 1
   max_retries: 2
-  serial_sources: true
+  mode: incremental
+  process_media: false
+  scan_concurrency: 4
+  processing_concurrency: 3
+  translation_concurrency: 3
+  requests_per_second: 4
+  overlap_hours: 6
+  reconciliation_days: 7
+  maximum_pages_per_source: 10

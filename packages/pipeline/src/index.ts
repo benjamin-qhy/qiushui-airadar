@@ -856,6 +856,7 @@ export type AnalysisResult = z.infer<typeof analysisResultSchema>
 export type Recommendation = 'core' | 'explore' | 'none'
 
 export interface RssItem {
+  mediaType?: 'audio' | 'video'
   externalId: string
   title: string
   canonicalUrl: string
@@ -1118,7 +1119,28 @@ export class RssAdapter {
       ) {
         continue
       }
+      const enclosures = [
+        entry.enclosure,
+        ...linkValues.filter(
+          (candidate) =>
+            candidate &&
+            typeof candidate === 'object' &&
+            scalar((candidate as Record<string, unknown>)['@_rel']) ===
+              'enclosure'
+        ),
+      ]
+        .flat()
+        .filter(Boolean)
+      const mediaType = enclosures
+        .map((value) =>
+          typeof value === 'object'
+            ? scalar((value as Record<string, unknown>)['@_type'])
+            : undefined
+        )
+        .find((type) => /^(?:audio|video)\//iu.test(type ?? ''))
+        ?.split('/')[0] as 'audio' | 'video' | undefined
       unseenItems.push({
+        ...(mediaType ? { mediaType } : {}),
         externalId,
         title,
         canonicalUrl,

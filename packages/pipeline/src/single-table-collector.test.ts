@@ -23,10 +23,8 @@ afterEach(async () => {
   )
 })
 
-it('classifies an X plugin directory as rule junk without fetching an article or invoking the model', async () => {
-  const root = await mkdtemp(
-    path.join(tmpdir(), 'qiushui-airadar-directory-')
-  )
+it('classifies an X plugin directory as unprocessed without fetching an article or invoking the model', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'qiushui-airadar-directory-'))
   roots.push(root)
   const repository = await SingleTableRepository.open(root)
   repositories.push(repository)
@@ -97,18 +95,18 @@ it('classifies an X plugin directory as rule junk without fetching an article or
   ])
   const row = repository.search({ sourceAccountId: 'x_openai' })[0]!
   expect(row).toMatchObject({
-    is_junk: 1,
-    junk_source: 'rule',
-    junk_reason: '目录页：插件列表，不是单篇文章',
+    is_unprocessed: 1,
+    is_junk: 0,
+    unprocessed_reason: '目录页：插件列表，不是单篇文章',
     process_status: 'completed',
   })
   expect(await collectSourcesSerially(input)).toEqual([
     {
       sourceId: 'x_openai',
       discovered: 1,
-      completed: 1,
+      completed: 0,
       failed: 0,
-      skipped: 0,
+      skipped: 1,
     },
   ])
   expect(repository.search({ sourceAccountId: 'x_openai' })).toHaveLength(1)
@@ -360,6 +358,7 @@ it('stops the current source after a provider balance failure', async () => {
   repositories.push(repository)
   let resolveCalls = 0
   const result = await collectSourcesSerially({
+    processMedia: true,
     sources: [
       {
         id: 'yt_openai',

@@ -15,6 +15,7 @@ import {
   saveAnalysisTranscriptionConfig,
   saveEditableConfigFile,
   saveSourceState,
+  saveCollectionConcurrency,
   sourcesConfigSchema,
 } from './single-table-config.js'
 
@@ -23,6 +24,110 @@ afterEach(async () => {
   await Promise.all(
     roots.splice(0).map((root) => rm(root, { recursive: true }))
   )
+})
+
+it('allows independently configured positive concurrency values without fixed upper caps and preserves legacy translation concurrency', () => {
+  const config = runtimeConfigSchema.parse({
+    timezone: 'Asia/Shanghai',
+    collection: {
+      schedule: 'manual',
+      max_retries: 2,
+      scan_concurrency: 50,
+      processing_concurrency: 1000,
+      translation_concurrency: 10000,
+    },
+  })
+  expect(config.collection).toMatchObject({
+    scan_concurrency: 50,
+    processing_concurrency: 1000,
+    translation_concurrency: 10000,
+  })
+  expect(
+    runtimeConfigSchema.parse({
+      timezone: 'Asia/Shanghai',
+      collection: {
+        schedule: 'manual',
+        max_retries: 2,
+        processing_concurrency: 7,
+      },
+    }).collection.translation_concurrency
+  ).toBe(7)
+  for (const value of [0, -1, 1.5]) {
+    expect(() =>
+      runtimeConfigSchema.parse({
+        ...config,
+        collection: { ...config.collection, translation_concurrency: value },
+      })
+    ).toThrow()
+  }
+})
+
+it('saves all three concurrency settings without changing other runtime policies', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'airadar-concurrency-'))
+  roots.push(root)
+  const configRoot = await initializeSingleTableConfig(
+    path.resolve('config'),
+    root
+  )
+  const before = (await loadSingleTableConfig(configRoot)).runtime.collection
+  const values = {
+    scan_concurrency: 10,
+    processing_concurrency: 50,
+    translation_concurrency: 100,
+  }
+  await saveCollectionConcurrency(configRoot, values)
+  expect((await loadSingleTableConfig(configRoot)).runtime.collection).toEqual({
+    ...before,
+    ...values,
+  })
+  await expect(
+    saveCollectionConcurrency(configRoot, { ...values, scan_concurrency: 0 })
+  ).rejects.toThrow()
+  expect(
+    (await loadSingleTableConfig(configRoot)).runtime.collection
+      .scan_concurrency
+  ).toBe(10)
+})
+
+it('upgrades the old 10-point default once with a backup and preserves subsequent user changes', async () => {
+  const root = await mkdtemp(
+    path.join(tmpdir(), 'airadar-translation-upgrade-')
+  )
+  roots.push(root)
+  const configRoot = await initializeSingleTableConfig(
+    path.resolve('config'),
+    root
+  )
+  const config = await loadSingleTableConfig(configRoot)
+  config.analysis.translation.minimum_total_score = 10
+  await writeFile(
+    path.join(configRoot, 'analysis.yaml'),
+    JSON.stringify(config.analysis)
+  )
+  await rm(path.join(configRoot, 'local', 'incremental-collection-v1.json'))
+  await initializeSingleTableConfig(path.resolve('config'), root)
+  expect(
+    (await loadSingleTableConfig(configRoot)).analysis.translation
+      .minimum_total_score
+  ).toBe(60)
+  expect(
+    JSON.parse(
+      await readFile(
+        path.join(configRoot, 'local', 'analysis-before-incremental.yaml'),
+        'utf8'
+      )
+    ).translation.minimum_total_score
+  ).toBe(10)
+  config.analysis.translation.minimum_total_score = 70
+  await writeFile(
+    path.join(configRoot, 'analysis.yaml'),
+    JSON.stringify(config.analysis)
+  )
+  await initializeSingleTableConfig(path.resolve('config'), root)
+  expect(
+    (await loadSingleTableConfig(configRoot)).analysis.translation
+      .minimum_total_score
+  ).toBe(70)
 })
 
 it('validates editable YAML before replacing the saved file', async () => {
@@ -62,8 +167,8 @@ it('loads all YAML configuration and preserves source order', async () => {
       .filter((source) => source.enabled)
       .map((source) => source.id)
   ).toEqual(['x_openai', 'yt_openai', 'openai_news'])
-  expect(config.runtime.collection.list_pages).toBe(1)
-  expect(config.runtime.collection.serial_sources).toBe(true)
+  expect(config.runtime.collection.mode).toBe('incremental')
+  expect(config.runtime.collection.processing_concurrency).toBe(3)
   expect(config.providers.routes).toEqual({
     x_list: ['twitterapi.io', 'tikhub-x'],
     x_article: ['twitterapi.io', 'native-http'],
@@ -79,7 +184,7 @@ it('loads all YAML configuration and preserves source order', async () => {
     substance: 20,
     new_information: 10,
   })
-  expect(config.analysis.translation.minimum_total_score).toBe(10)
+  expect(config.analysis.translation.minimum_total_score).toBe(60)
   expect(config.analysis.transcription.auto).toBe(false)
   expect(config.analysis.model).toEqual({
     provider: 'codex',
@@ -95,7 +200,9 @@ it('keeps audio transcription off by default and preserves model settings when t
     path.resolve(import.meta.dirname, '../../../config'),
     root
   )
-  expect((await loadSingleTableConfig(configRoot)).analysis.transcription.auto).toBe(false)
+  expect(
+    (await loadSingleTableConfig(configRoot)).analysis.transcription.auto
+  ).toBe(false)
   const originalModel = (await loadSingleTableConfig(configRoot)).analysis.model
   await saveAnalysisTranscriptionConfig(configRoot, true)
   const updated = await loadSingleTableConfig(configRoot)
@@ -266,4 +373,28 @@ it('removes legacy collection limits from an existing installation', async () =>
   await initializeSingleTableConfig(templates, root)
   expect(await readFile(runtimeFile, 'utf8')).not.toContain('per_source_limit')
   expect(await readFile(sourcesFile, 'utf8')).not.toContain('per_source_limit')
+})
+
+it('defaults all media off and reads legacy Twitter settings only when the new policy is absent', () => {
+  const legacy = {
+    timezone: 'Asia/Shanghai',
+    collection: {
+      schedule: 'manual',
+      max_retries: 2,
+      process_twitter_videos: true,
+    },
+  }
+  expect(runtimeConfigSchema.parse(legacy).collection.process_media).toBe(true)
+  expect(
+    runtimeConfigSchema.parse({
+      ...legacy,
+      collection: { ...legacy.collection, process_media: false },
+    }).collection.process_media
+  ).toBe(false)
+  expect(
+    runtimeConfigSchema.parse({
+      ...legacy,
+      collection: { schedule: 'manual', max_retries: 2 },
+    }).collection.process_media
+  ).toBe(false)
 })

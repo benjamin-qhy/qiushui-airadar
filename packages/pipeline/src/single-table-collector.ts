@@ -11,7 +11,7 @@ import {
   processSingleTableContent,
   type SingleTableModelGateway,
 } from './single-table-flow.js'
-import { classifyNonArticlePage } from '@qiushui-airadar/source-adapters'
+import { classifyUnprocessedContent } from '@qiushui-airadar/source-adapters'
 
 export interface ConfiguredSource {
   id: string
@@ -23,6 +23,7 @@ export interface ConfiguredSource {
 }
 
 export interface DiscoveredContent {
+  mediaType?: 'audio' | 'video'
   externalId: string
   url?: string
   title?: string
@@ -40,6 +41,16 @@ export interface SinglePageDiscovery {
   providerId?: string
   request: unknown
   response: unknown
+  nextCursor?: string
+  rawCount?: number
+  oldestPublishedAt?: string
+}
+
+export interface DiscoveryWindow {
+  mode: 'search' | 'timeline'
+  since: string
+  until: string
+  cursor?: string
 }
 
 export interface ResolvedContent {
@@ -48,10 +59,10 @@ export interface ResolvedContent {
 }
 
 export interface SingleTableSourceProvider {
-  // One call per source. There is deliberately no cursor or next-page API.
   discover(
     source: ConfiguredSource,
-    limit?: number
+    limit?: number,
+    window?: DiscoveryWindow
   ): Promise<SinglePageDiscovery>
   resolve(
     source: ConfiguredSource,
@@ -60,6 +71,7 @@ export interface SingleTableSourceProvider {
 }
 
 export interface CollectSourcesOptions {
+  processMedia?: boolean
   resumeIncomplete?: boolean
   resumeStartedAt?: string
   runStartedAt?: string
@@ -94,6 +106,7 @@ export interface CollectSourcesOptions {
     page: SinglePageDiscovery
   ) => Promise<void>
   waitUntilRunnable?: () => Promise<void>
+  deferTranslation?: boolean
 }
 
 export interface SourceRunResult {
@@ -163,6 +176,30 @@ export async function collectSourcesSerially(
       await options.waitUntilRunnable?.()
       let original: OriginalContent | undefined
       try {
+        const excludedReason = classifyUnprocessedContent({
+          platform: source.platform,
+          kind: item.mediaType ?? item.kind,
+          url: item.url,
+          processMedia: options.processMedia,
+        })
+        if (excludedReason) {
+          const excluded = await options.repository.saveDiscovery({
+            platform: source.platform,
+            sourceType: source.platform,
+            sourceAccountId: source.id,
+            sourceAccountName: source.account_name,
+            externalContentId: item.externalId,
+            canonicalUrl: item.url,
+            title: item.title ?? item.externalId,
+            kind: item.kind,
+            format: item.format ?? 'plain_text',
+            language: source.language,
+            publishedAt: item.publishedAt,
+          })
+          await options.repository.setUnprocessed(excluded.id, excludedReason)
+          result.skipped++
+          continue
+        }
         const earlyIdentity = discoveredIdentity(source, item)
         const earlyExisting = earlyIdentity
           ? options.repository.get(earlyIdentity.key)
@@ -180,7 +217,10 @@ export async function collectSourcesSerially(
               item.externalId,
               item.interaction
             )
-          if (earlyExisting.process_status === 'completed') {
+          if (
+            earlyExisting.process_status === 'completed' &&
+            !earlyExisting.is_unprocessed
+          ) {
             result.completed++
             if (
               options.runStartedAt &&
@@ -189,44 +229,6 @@ export async function collectSourcesSerially(
               breakdown.newlyCompleted++
             else breakdown.existingCompleted++
           } else result.skipped++
-          continue
-        }
-        const nonArticleReason =
-          source.platform === 'x' && item.kind === 'article' && item.url
-            ? classifyNonArticlePage(item.url)
-            : undefined
-        if (nonArticleReason) {
-          const unavailable = {
-            platform: source.platform,
-            sourceType: source.platform,
-            sourceAccountId: source.id,
-            sourceAccountName: source.account_name
-              .replace(/^(?:X|YouTube)\s*\/\s*/iu, '')
-              .trim(),
-            externalContentId: item.externalId,
-            canonicalUrl: item.url,
-            title: item.title ?? item.externalId,
-            originalTitle: item.title,
-            kind: item.kind,
-            format: item.format ?? 'plain_text',
-            language: source.language,
-            publishedAt: item.publishedAt,
-          }
-          const existing = options.repository.get(
-            contentIdentity({ ...unavailable, body: '' }).key
-          )
-          if (existing) {
-            await options.repository.setRuleJunk(existing.id, nonArticleReason)
-          } else {
-            const excluded = await options.repository.recordUnavailable(
-              unavailable,
-              nonArticleReason,
-              false,
-              { request: page.request, response: page.response }
-            )
-            await options.repository.setRuleJunk(excluded.id, nonArticleReason)
-          }
-          result.skipped++
           continue
         }
         const resolved = await options.provider.resolve(source, item)
@@ -260,6 +262,7 @@ export async function collectSourcesSerially(
           gateway: options.gateway,
           promptsRoot: options.promptsRoot,
           original: resolved.original,
+          deferTranslation: options.deferTranslation,
           profile: options.profile,
           profileVersion: options.profileVersion,
           scoring: options.scoring,
@@ -289,7 +292,7 @@ export async function collectSourcesSerially(
             options.onError?.(source, item, error)
             continue
           }
-          await options.repository.recordUnavailable(
+          const unavailable = await options.repository.recordUnavailable(
             {
               platform: source.platform,
               sourceType: source.platform,
@@ -312,6 +315,18 @@ export async function collectSourcesSerially(
               /captions|transcription/iu.test(String(error)),
             { request: page.request, response: page.response }
           )
+          const reason = classifyUnprocessedContent({
+            platform: source.platform,
+            kind: item.mediaType ?? item.kind,
+            url: item.url,
+            processMedia: options.processMedia,
+            error: String(error),
+          })
+          if (reason) {
+            await options.repository.setUnprocessed(unavailable.id, reason)
+            result.failed--
+            result.skipped++
+          }
         } catch (recordError) {
           options.onError?.(source, item, recordError)
         }

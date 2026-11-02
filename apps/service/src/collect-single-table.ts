@@ -1,24 +1,21 @@
 import path from 'node:path'
+import { appendFile, readFile } from 'node:fs/promises'
 
 import {
   createFileSecretReader,
   initializeSingleTableConfig,
   loadSingleTableConfig,
   loadSourceState,
-  saveSourceState,
 } from '@qiushui-airadar/config'
 import {
-  collectSourcesSerially,
   createFileModelCredentialStore,
   createSingleTableModelGateway,
 } from '@qiushui-airadar/pipeline'
 import { SingleTableRepository } from '@qiushui-airadar/runtime'
 import { createSingleTableSourceProvider } from './single-table-provider.js'
-import {
-  checkXVideoTranscription,
-  transcribeXVideo,
-} from './x-video-transcriber.js'
+import { transcribeXVideo } from './x-video-transcriber.js'
 import { addCollectionRunEvent, beginCollectionRun } from './collection-run.js'
+import { collectInStages } from './staged-collection.js'
 
 export interface CollectionControl {
   modelFailureMessage?: string
@@ -34,7 +31,11 @@ export function createCollectionControl(): CollectionControl {
   let paused = false
   let interrupted = false
   let onPausedChange: ((paused: boolean) => Promise<void>) | undefined
-  let resumeWaiter: (() => void) | undefined
+  const resumeWaiters = new Set<() => void>()
+  function wake() {
+    for (const waiter of resumeWaiters) waiter()
+    resumeWaiters.clear()
+  }
   return {
     bind(callback) {
       onPausedChange = callback
@@ -46,27 +47,26 @@ export function createCollectionControl(): CollectionControl {
     },
     async pauseForModelFailure(message) {
       this.modelFailureMessage = message
+      if (paused) return
       paused = true
       await onPausedChange?.(true)
     },
     interrupt() {
       interrupted = true
       paused = false
-      resumeWaiter?.()
-      resumeWaiter = undefined
+      wake()
     },
     async resume() {
       if (!paused) return
       paused = false
       this.modelFailureMessage = undefined
       await onPausedChange?.(false)
-      resumeWaiter?.()
-      resumeWaiter = undefined
+      wake()
     },
     async waitUntilRunnable() {
       if (paused)
         await new Promise<void>((resolve) => {
-          resumeWaiter = resolve
+          resumeWaiters.add(resolve)
         })
       if (interrupted) throw new Error('COLLECTION_INTERRUPTED')
     },
@@ -105,6 +105,12 @@ export async function collectSingleTable(options: {
     const results = await executeCollection(options, tracker)
     tracker.run.status = 'completed'
     tracker.run.endedAt = new Date().toISOString()
+    const pending = tracker.run.sources.filter(
+      (source) => source.discoveryPending
+    ).length
+    tracker.run.message = pending
+      ? `本轮处理已结束，${pending} 个信源待补齐，已保留采集位置。`
+      : `本轮扫描、评分和翻译已结束${tracker.run.translationFailed ? `，${tracker.run.translationFailed} 条翻译失败，可单独重试` : ''}。`
     addCollectionRunEvent(tracker.run, {
       action: 'collection-completed',
       status: 'succeeded',
@@ -115,17 +121,22 @@ export async function collectSingleTable(options: {
   } catch (error) {
     const interrupted =
       error instanceof Error && error.message === 'COLLECTION_INTERRUPTED'
-    tracker.run.status = interrupted ? 'interrupted' : 'failed'
+    const resumable =
+      interrupted ||
+      Boolean(tracker.run.phase && tracker.run.phase !== 'finished')
+    tracker.run.status = resumable ? 'interrupted' : 'failed'
     tracker.run.endedAt = new Date().toISOString()
     tracker.run.message = interrupted
       ? '服务已停止，本轮进度已保存。重新启动后点击“继续上轮采集”。'
-      : '采集任务异常退出，请检查信源和模型配置后重新执行。'
+      : resumable
+        ? '执行异常，已保留本轮进度；排查后点击“继续上轮采集”。'
+        : '采集任务异常退出，请检查信源和模型配置后重新执行。'
     const code = (error as NodeJS.ErrnoException)?.code
     if (!interrupted && code && /^[A-Z_0-9]{1,40}$/u.test(code))
       tracker.run.message += ` 错误代码：${code}。`
     addCollectionRunEvent(tracker.run, {
-      action: interrupted ? 'collection-interrupted' : 'collection-failed',
-      status: interrupted ? 'paused' : 'failed',
+      action: resumable ? 'collection-interrupted' : 'collection-failed',
+      status: resumable ? 'paused' : 'failed',
       message: tracker.run.message,
     })
     await tracker.save()
@@ -145,8 +156,20 @@ async function executeCollection(
     dataRoot
   )
   const config = await loadSingleTableConfig(configRoot)
-  if (config.analysis.transcription.auto)
-    await checkXVideoTranscription(options.dataRoot)
+  const collectionSettings = { ...config.runtime.collection }
+  if (options.resume) {
+    try {
+      const work = JSON.parse(
+        await readFile(
+          path.join(dataRoot, 'collection-work', tracker.run.id, 'work.json'),
+          'utf8'
+        )
+      ) as { concurrency?: Partial<typeof collectionSettings> }
+      Object.assign(collectionSettings, work.concurrency)
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+    }
+  }
   const sourceState = await loadSourceState(configRoot)
   const secretReader = createFileSecretReader(
     options.secretFile ?? path.join(dataRoot, '.env')
@@ -232,32 +255,66 @@ async function executeCollection(
       twitterApiKey,
       youtubeApiKey,
       providerRoutes: config.providers.routes,
+      userIdCacheFile: path.join(configRoot, 'local', 'x-user-ids.json'),
+      maxRetries: config.runtime.collection.max_retries,
+      requestsPerSecond: collectionSettings.requests_per_second,
       xVideoTranscriber: config.analysis.transcription.auto
         ? (url) => transcribeXVideo(options.dataRoot, url)
         : undefined,
+      async onRequest(metric) {
+        const totals = (tracker.run.requests ??= {
+          count: 0,
+          durationMs: 0,
+          estimatedCostUsd: 0,
+          unknownPriceCount: 0,
+        })
+        totals.count++
+        totals.durationMs += metric.durationMs
+        totals.estimatedCostUsd += metric.estimatedCostUsd ?? 0
+        if (metric.estimatedCostUsd === undefined) totals.unknownPriceCount++
+        await appendFile(
+          path.join(
+            dataRoot,
+            'collection-runs',
+            `${tracker.run.id}-requests.jsonl`
+          ),
+          JSON.stringify(metric) + '\n',
+          { mode: 0o600 }
+        )
+      },
     })
   const sources = config.sources.sources.map((source) => ({
     ...source,
     enabled: sourceState.sources[source.id]?.enabled_override ?? source.enabled,
   }))
-  tracker.run.sources = sources
-    .filter((source) => source.enabled)
-    .map((source) => ({
-      sourceId: source.id,
-      name: source.account_name,
-      status: 'pending',
-      discovered: 0,
-      completed: 0,
-      newlyCompleted: 0,
-      existingCompleted: 0,
-      failed: 0,
-      skipped: 0,
-    }))
+  if (!options.resume || tracker.run.sources.length === 0)
+    tracker.run.sources = sources
+      .filter((source) => source.enabled)
+      .map(
+        (source) =>
+          (options.resume &&
+            tracker.run.sources.find(
+              (entry) => entry.sourceId === source.id
+            )) || {
+            sourceId: source.id,
+            name: source.account_name,
+            status: 'pending',
+            discovered: 0,
+            completed: 0,
+            newlyCompleted: 0,
+            existingCompleted: 0,
+            failed: 0,
+            skipped: 0,
+          }
+      )
   await tracker.save()
   const repository =
     options.repository ?? (await SingleTableRepository.open(dataRoot))
   try {
-    const results = await collectSourcesSerially({
+    const results = await collectInStages({
+      tracker,
+      configRoot,
+      settings: collectionSettings,
       resumeIncomplete: options.resume,
       resumeStartedAt: tracker.run.startedAt,
       runStartedAt: tracker.run.startedAt,
@@ -268,35 +325,6 @@ async function executeCollection(
       waitUntilRunnable: options.control
         ? () => options.control!.waitUntilRunnable()
         : undefined,
-      async onProgress(source, result, finished, breakdown) {
-        const entry = tracker.run.sources.find(
-          (row) => row.sourceId === source.id
-        )!
-        const wasPending = entry.status === 'pending'
-        Object.assign(entry, result, {
-          ...breakdown,
-          status: finished ? 'completed' : 'running',
-        })
-        if (wasPending)
-          addCollectionRunEvent(tracker.run, {
-            action: 'source-started',
-            status: 'running',
-            sourceId: source.id,
-            sourceName: source.account_name,
-            message: `开始处理信源「${source.account_name}」`,
-          })
-        if (finished)
-          addCollectionRunEvent(tracker.run, {
-            action: 'source-completed',
-            status: result.failed ? 'failed' : 'succeeded',
-            sourceId: source.id,
-            sourceName: source.account_name,
-            message: result.failed
-              ? `信源「${source.account_name}」处理结束，有 ${result.failed} 条异常`
-              : `信源「${source.account_name}」处理完成`,
-          })
-        await tracker.save()
-      },
       promptsRoot: options.promptsRoot,
       profile: config.profile,
       profileVersion: String(config.profile.version),
@@ -320,18 +348,6 @@ async function executeCollection(
         process.stderr.write(
           `Source ${source.id}, item ${item?.externalId ?? 'list'} failed; see content log if created.\n`
         )
-      },
-      async afterSource(source, result, page) {
-        if (result.failed) return
-        const latestState = await loadSourceState(configRoot)
-        latestState.sources[source.id] = {
-          ...latestState.sources[source.id],
-          last_seen_content_id:
-            page.items[0]?.externalId ??
-            sourceState.sources[source.id]?.last_seen_content_id,
-          last_collected_at: new Date().toISOString(),
-        }
-        await saveSourceState(configRoot, latestState)
       },
     })
     return results

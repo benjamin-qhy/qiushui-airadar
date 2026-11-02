@@ -2053,3 +2053,16 @@ it('retries only transient article failures and upgrades failed cleartext transp
   ])
   expect(result.body.length).toBeGreaterThan(200)
 })
+
+it('identifies podcast RSS enclosures even when the episode URL is an HTML page', async () => {
+  const rss =
+    '<rss><channel><item><guid>episode</guid><title>Audio episode</title><link>https://example.com/episode</link><enclosure url="https://cdn.example.com/episode.mp3" type="audio/mpeg" /></item></channel></rss>'
+  const result = await new RssAdapter(async () => new Response(rss)).discover({
+    feedUrl: 'https://example.com/feed',
+    incremental: true,
+  })
+  expect(result.items[0]).toMatchObject({
+    canonicalUrl: 'https://example.com/episode',
+    mediaType: 'audio',
+  })
+})

@@ -22,10 +22,12 @@ export interface ContentFilters {
   sort?: string
 }
 
-export type ContentScope = 'daily' | 'all' | 'exceptions' | 'favorites' | 'junk'
+export type ContentScope =
+  'daily' | 'all' | 'exceptions' | 'favorites' | 'junk' | 'unprocessed'
 
 export function isExceptionalContent(item: FeedItem): boolean {
   return (
+    item.processStatus !== 'unprocessed' &&
     !item.junk.isJunk &&
     (item.processStatus !== 'completed' ||
       item.totalScore === null ||
@@ -38,11 +40,12 @@ export function filterContentScope(
   scope: ContentScope
 ): FeedItem[] {
   return items.filter((item) => {
+    if (scope === 'unprocessed') return item.processStatus === 'unprocessed'
     if (scope === 'junk') return item.junk.isJunk
     if (scope === 'favorites')
       return item.utilizationActions.includes('favorite')
     if (scope === 'exceptions') return isExceptionalContent(item)
-    if (item.junk.isJunk) return false
+    if (item.junk.isJunk || item.processStatus === 'unprocessed') return false
     if (isExceptionalContent(item)) return false
     if (scope === 'all') return true
     return (
@@ -61,7 +64,7 @@ export function filterContentItems(
     const inflowDate = localDateKey(item.firstInflowAt)
     return (
       (!query ||
-        `${item.title} ${item.chineseTitle ?? ''} ${item.summary} ${item.keywordsText ?? ''} ${item.valueSummary ?? ''} ${item.source?.name ?? ''}`
+        `${item.title} ${item.chineseTitle ?? ''} ${item.summary} ${item.keywordsText ?? ''} ${item.valueSummary ?? ''} ${item.unprocessedReason ?? ''} ${item.source?.name ?? ''}`
           .toLowerCase()
           .includes(query)) &&
       (filters.processStatus === 'all' ||

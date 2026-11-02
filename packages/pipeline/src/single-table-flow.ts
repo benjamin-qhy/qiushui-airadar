@@ -6,13 +6,14 @@ import { z } from 'zod'
 import type { CredentialStore, Model, Models } from '@earendil-works/pi-ai'
 import { createApplicationModels } from './pi-models.js'
 
-import type {
-  SingleTableRepository,
-  ContentRow,
-  LogEvent,
-  OriginalContent,
-  ScoreDimension,
-  ScoringRules,
+import {
+  contentIdentity,
+  type SingleTableRepository,
+  type ContentRow,
+  type LogEvent,
+  type OriginalContent,
+  type ScoreDimension,
+  type ScoringRules,
 } from '@qiushui-airadar/runtime'
 import { createReadOnlyCodexCredentialStore } from './index.js'
 import {
@@ -340,6 +341,7 @@ export interface ContentFlowOptions {
   translationMinimumTotalScore: number
   automaticTranslationLimits?: AutomaticTranslationLimits
   capturedCalls?: LogEvent[]
+  deferTranslation?: boolean
 }
 
 function getMarkdownSection(
@@ -388,7 +390,26 @@ function parseFrontmatter(markdown: string): {
 function parseModelJson(text: string): unknown {
   const trimmed = text.trim()
   const fenced = /^```(?:json)?\s*\n([\s\S]*?)\n```$/iu.exec(trimmed)
-  return JSON.parse(fenced ? fenced[1]! : trimmed)
+  const json = fenced ? fenced[1]! : trimmed
+  try {
+    return JSON.parse(json)
+  } catch {
+    // Some models emit literal newlines/tabs inside JSON strings. Escape only
+    // those characters; malformed structure and invalid schemas still fail.
+    let inside = false
+    let escaped = false
+    let repaired = ''
+    for (const character of json) {
+      if (inside && character.charCodeAt(0) < 32) {
+        repaired += JSON.stringify(character).slice(1, -1)
+      } else {
+        repaired += character
+        if (!escaped && character === '"') inside = !inside
+      }
+      escaped = !escaped && character === '\\'
+    }
+    return JSON.parse(repaired)
+  }
 }
 
 function longMode(original: OriginalContent, minimum: number): boolean {
@@ -476,6 +497,8 @@ export async function processSingleTableContent(
   options: ContentFlowOptions
 ): Promise<ContentRow> {
   const original = options.original
+  const existing = options.repository.get(contentIdentity(original).key)
+  if (existing?.is_unprocessed) return existing
   const row = await options.repository.saveOriginal(original)
   for (const event of options.capturedCalls ?? [])
     await options.repository.appendLog(row.id, event)
@@ -582,6 +605,7 @@ export async function processSingleTableContent(
   )
   if (skipReason)
     return options.repository.setTranslationSkipped(row.id, skipReason)
+  if (options.deferTranslation) return scored
   return translateSingleTableContent({
     ...options,
     row: scored,
@@ -596,6 +620,7 @@ export async function translateSingleTableContent(
   if (
     original.language !== 'en' ||
     row.is_junk ||
+    row.is_unprocessed ||
     !original.body.trim() ||
     row.translated_to_chinese
   )

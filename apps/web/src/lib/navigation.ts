@@ -5,6 +5,7 @@ import type { ContentScope } from './content-filters'
 export const pages: readonly PageKey[] = [
   'daily',
   'all',
+  'unprocessed',
   'exceptions',
   'favorites',
   'junk',
@@ -18,6 +19,7 @@ export const pages: readonly PageKey[] = [
 const contentScopes: readonly ContentScope[] = [
   'daily',
   'all',
+  'unprocessed',
   'exceptions',
   'favorites',
   'junk',

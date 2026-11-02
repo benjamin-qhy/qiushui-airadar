@@ -33,6 +33,8 @@ export function App() {
         <ContentWorkspace key='daily' scope='daily' />
       ) : page === 'all' ? (
         <ContentWorkspace key='all' scope='all' />
+      ) : page === 'unprocessed' ? (
+        <ContentWorkspace key='unprocessed' scope='unprocessed' />
       ) : page === 'exceptions' ? (
         <ContentWorkspace key='exceptions' scope='exceptions' />
       ) : page === 'favorites' ? (

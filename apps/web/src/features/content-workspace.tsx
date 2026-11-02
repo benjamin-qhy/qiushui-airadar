@@ -165,10 +165,12 @@ function listTitle(item: FeedItem): string {
 const kindLabels: Record<NonNullable<FeedItem['kind']>, string> = {
   short_post: '短文',
   video: '视频',
+  audio: '语音',
   image_post: '图文',
   article: '文章',
 }
 const statusLabels: Record<FeedItem['processStatus'], string> = {
+  unprocessed: '未处理',
   processing: '处理中',
   completed: '已完成',
   failed: '失败',
@@ -223,7 +225,10 @@ function contentCover(item: FeedItem): string | undefined {
 function cardContent(item: FeedItem): string {
   if (item.kind === 'short_post' || item.kind === 'image_post')
     return item.chineseTranslation || item.body || item.summary || '暂无正文'
-  return item.summary || '暂无 AI 总结'
+  return (
+    item.summary ||
+    (item.processStatus === 'unprocessed' ? '按规则暂不处理' : '暂无 AI 总结')
+  )
 }
 
 function CardBody({ item }: { item: FeedItem }) {
@@ -289,7 +294,8 @@ const scoreLabels: Record<string, string> = {
 
 function scoreLabel(item: FeedItem): string {
   if (item.totalScore !== null) return `${item.totalScore} 分`
-  if (item.junk.isJunk) return '不参与评分'
+  if (item.junk.isJunk || item.processStatus === 'unprocessed')
+    return '不参与评分'
   if (item.processStatus !== 'completed')
     return statusLabels[item.processStatus]
   return '评分缺失'
@@ -673,6 +679,14 @@ export function ContentCard({
                 )}
               </div>
             </div>
+            {item.processStatus === 'unprocessed' && (
+              <Badge
+                variant='outline'
+                className='mt-2 max-w-full whitespace-normal text-left'
+              >
+                未处理 · {item.unprocessedReason}
+              </Badge>
+            )}
             {item.junk.isJunk && (
               <Badge
                 variant='destructive'
@@ -680,14 +694,16 @@ export function ContentCard({
               >
                 垃圾内容 ·{' '}
                 {item.junk.note ??
+                  item.junk.reason ??
                   (item.junk.source === 'manual' ? '人工标记' : 'AI 判定')}
               </Badge>
             )}
-            {item.processStatus !== 'completed' && (
-              <Badge variant='outline' className='mt-2'>
-                {statusLabels[item.processStatus]}
-              </Badge>
-            )}
+            {item.processStatus !== 'completed' &&
+              item.processStatus !== 'unprocessed' && (
+                <Badge variant='outline' className='mt-2'>
+                  {statusLabels[item.processStatus]}
+                </Badge>
+              )}
           </div>
         </article>
       </HoverCardTrigger>
@@ -785,6 +801,7 @@ export function Detail({
     setOperationMessage(`翻译任务已开始：${result.taskId.slice(0, 8)}`)
   }
   const showHeaderMetadata =
+    item.processStatus === 'unprocessed' ||
     item.junk.isJunk ||
     item.originalStatus === 'deleted' ||
     item.originalStatus === 'private'
@@ -906,7 +923,8 @@ export function Detail({
               {(item.processStatus !== 'completed' ||
                 item.originalStatus === 'deleted' ||
                 item.originalStatus === 'private') &&
-                !canTranslate && (
+                !canTranslate &&
+                item.processStatus !== 'unprocessed' && (
                   <Button
                     variant='ghost'
                     size='icon'
@@ -974,12 +992,23 @@ export function Detail({
             {showHeaderMetadata && (
               <div className='mb-3 flex flex-wrap items-center justify-between gap-2'>
                 <div className='flex flex-wrap items-center gap-2'>
+                  {item.processStatus === 'unprocessed' && (
+                    <Badge
+                      variant='outline'
+                      className='whitespace-normal text-left'
+                    >
+                      未处理 · {item.unprocessedReason}
+                    </Badge>
+                  )}
                   {item.junk.isJunk && (
                     <Badge
                       variant='destructive'
                       className='whitespace-normal text-left'
                     >
-                      垃圾内容{item.junk.note ? ` · ${item.junk.note}` : ''}
+                      垃圾内容
+                      {item.junk.note || item.junk.reason
+                        ? ` · ${item.junk.note || item.junk.reason}`
+                        : ''}
                     </Badge>
                   )}
                   {(item.originalStatus === 'deleted' ||
@@ -1519,13 +1548,15 @@ export function ContentWorkspace({ scope }: { scope: ContentScope }) {
   const title =
     scope === 'daily'
       ? '每日精选'
-      : scope === 'exceptions'
-        ? '异常数据'
-        : scope === 'favorites'
-          ? '我的收藏'
-          : scope === 'junk'
-            ? '垃圾内容'
-            : '全部内容'
+      : scope === 'unprocessed'
+        ? '未处理'
+        : scope === 'exceptions'
+          ? '异常数据'
+          : scope === 'favorites'
+            ? '我的收藏'
+            : scope === 'junk'
+              ? '垃圾内容'
+              : '全部内容'
   const initial = () => {
     try {
       return typeof localStorage === 'undefined'
@@ -1607,9 +1638,7 @@ export function ContentWorkspace({ scope }: { scope: ContentScope }) {
   const load = useCallback(
     (active: () => boolean) =>
       api<{ items: FeedItem[] }>(
-        filters.query.trim()
-          ? `/api/contents?keyword=${encodeURIComponent(filters.query.trim())}`
-          : '/api/contents'
+        `/api/contents?scope=${scope}${filters.query.trim() ? `&keyword=${encodeURIComponent(filters.query.trim())}` : ''}`
       )
         .then((data) => {
           if (!active()) return
@@ -1619,7 +1648,7 @@ export function ContentWorkspace({ scope }: { scope: ContentScope }) {
         .catch((reason) => {
           if (active()) setError(String(reason))
         }),
-    [filters.query]
+    [filters.query, scope]
   )
   const visible = useMemo(() => {
     const scoped = filterContentScope(items ?? [], scope)
@@ -1879,9 +1908,11 @@ export function ContentWorkspace({ scope }: { scope: ContentScope }) {
                   </a>
                 </div>
                 <div className='line-clamp-1 text-xs text-muted-foreground'>
-                  {item.junk.isJunk && item.junk.note
-                    ? `垃圾原因：${item.junk.note}`
-                    : item.chineseTranslation || item.summary || '暂无摘要'}
+                  {item.processStatus === 'unprocessed'
+                    ? `未处理：${item.unprocessedReason}`
+                    : item.junk.isJunk && (item.junk.note || item.junk.reason)
+                      ? `垃圾原因：${item.junk.note || item.junk.reason}`
+                      : item.chineseTranslation || item.summary || '暂无摘要'}
                 </div>
               </TableCell>
               <TableCell>
@@ -1970,6 +2001,7 @@ export function ContentWorkspace({ scope }: { scope: ContentScope }) {
   const kindFilters: Array<{ value: string; label: string }> = [
     { value: 'all', label: '全部' },
     { value: 'video', label: '视频' },
+    { value: 'audio', label: '语音' },
     { value: 'image_post', label: '图文' },
     { value: 'article', label: '文章' },
     { value: 'short_post', label: '短帖' },

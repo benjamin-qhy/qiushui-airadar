@@ -1,4 +1,4 @@
-import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { appendFile, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { expect, it } from 'vitest'
@@ -8,6 +8,30 @@ import {
   createCollectionControl,
 } from './collect-single-table.js'
 import { createSingleTableServiceApp } from './single-table-service.js'
+
+it('rebuilds request cost totals from the permanent ledger on resume', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'airadar-ledger-resume-'))
+  try {
+    const previous = await beginCollectionRun(root)
+    previous.run.pid = 2147483647
+    await previous.save()
+    await appendFile(
+      path.join(root, 'collection-runs', `${previous.run.id}-requests.jsonl`),
+      '{"durationMs":120,"estimatedCostUsd":0.003}\n{"durationMs":80}\n{"incomplete":'
+    )
+    await previous.release()
+    const resumed = await beginCollectionRun(root, true)
+    expect(resumed.run.requests).toEqual({
+      count: 3,
+      durationMs: 200,
+      estimatedCostUsd: 0.003,
+      unknownPriceCount: 2,
+    })
+    await resumed.release()
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
 
 it('starts asynchronously via HTTP, prevents duplicate starts and reports final progress', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'airadar-manual-'))
@@ -332,8 +356,8 @@ it('tracks real collector source completion and failures without stopping remain
     expect(run?.events.map((event) => event.action)).toEqual([
       'collection-started',
       'source-started',
-      'source-completed',
       'source-started',
+      'source-completed',
       'source-completed',
       'collection-completed',
     ])

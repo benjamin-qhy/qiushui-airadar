@@ -193,9 +193,9 @@ describe('stable platform identity', () => {
         'https://aws-experience.com/apj/smb/e/0700a/architecting-flexible-agentic-ai'
       )
     ).toBe('活动页：工作坊报名与介绍，不是文章正文')
-    expect(
-      classifyNonArticlePage('https://claude.ai/artifact/example')
-    ).toBe('互动作品：游戏或应用，不是文章正文')
+    expect(classifyNonArticlePage('https://claude.ai/artifact/example')).toBe(
+      '互动作品：游戏或应用，不是文章正文'
+    )
     expect(
       classifyNonArticlePage(
         'https://chatgpt.com/plugins?category=small-business'
@@ -477,23 +477,44 @@ describe('redacted real provider samples', () => {
           ? Response.json({ data: { id: 'author-1' } })
           : Response.json({
               data: {
-                tweets: [{
-                  id: 'quote-2',
-                  text: 'My comment',
-                  author: { userName: 'alice', name: 'Alice' },
-                  extendedEntities: { media: [{ type: 'photo', media_url_https: 'https://pbs.twimg.com/media/main.jpg' }] },
-                  quoted_tweet: {
-                    id: 'original-2',
-                    text: 'The complete quoted text',
-                    author: { userName: 'bob', name: 'Bob' },
-                    extendedEntities: { media: [{ type: 'photo', media_url_https: 'https://pbs.twimg.com/media/quoted.jpg' }] },
+                tweets: [
+                  {
+                    id: 'quote-2',
+                    text: 'My comment',
+                    author: { userName: 'alice', name: 'Alice' },
+                    extendedEntities: {
+                      media: [
+                        {
+                          type: 'photo',
+                          media_url_https:
+                            'https://pbs.twimg.com/media/main.jpg',
+                        },
+                      ],
+                    },
+                    quoted_tweet: {
+                      id: 'original-2',
+                      text: 'The complete quoted text',
+                      author: { userName: 'bob', name: 'Bob' },
+                      extendedEntities: {
+                        media: [
+                          {
+                            type: 'photo',
+                            media_url_https:
+                              'https://pbs.twimg.com/media/quoted.jpg',
+                          },
+                        ],
+                      },
+                    },
                   },
-                }],
+                ],
               },
             }),
     })
-    const item = (await provider.discover({ source: xSource, limit: 20 })).items[0]
-    expect(item?.images).toEqual([{ order: 0, url: 'https://pbs.twimg.com/media/main.jpg' }])
+    const item = (await provider.discover({ source: xSource, limit: 20 }))
+      .items[0]
+    expect(item?.images).toEqual([
+      { order: 0, url: 'https://pbs.twimg.com/media/main.jpg' },
+    ])
     expect(item?.quotedPost).toEqual({
       url: 'https://x.com/i/status/original-2',
       authorName: 'Bob',
@@ -1002,4 +1023,89 @@ describe('video completeness gate', () => {
       })
     ).toEqual({ status: 'ready' })
   })
+})
+
+it('recognizes confirmed application destinations without excluding actual articles', () => {
+  for (const url of [
+    'https://claude.ai/',
+    'https://www.flova.ai/?refCode=abc',
+    'https://platform.heygen.com/speech-to-speech',
+    'https://police-station.kimi.page/',
+  ])
+    expect(classifyNonArticlePage(url)).toBeDefined()
+  expect(
+    classifyNonArticlePage('https://www.flova.ai/blog/story')
+  ).toBeUndefined()
+  expect(
+    selectXCarrier({
+      tweetId: 'native-with-link',
+      text: 'Video post',
+      nativeVideo: true,
+      urls: [{ expandedUrl: 'https://example.com/article', kind: 'article' }],
+    })
+  ).toMatchObject({
+    kind: 'video',
+    carrier: 'x-native-video',
+    platformIdentity: 'x:native-with-link',
+  })
+})
+
+it('separates deliberate exclusions from retriable errors and recognizes audio without confusing Hugging Face Spaces', async () => {
+  const { classifyUnprocessedContent: classify } = await import('./index.js')
+  expect(classify({ platform: 'youtube', kind: 'video' })).toBe('视频内容')
+  expect(
+    classify({
+      platform: 'x',
+      kind: 'article',
+      url: 'https://x.com/i/spaces/audio123',
+    })
+  ).toContain('语音直播')
+  expect(
+    classify({
+      platform: 'rss',
+      kind: 'article',
+      url: 'https://example.com/episode.mp3',
+    })
+  ).toContain('音频')
+  expect(
+    classify({
+      platform: 'x',
+      kind: 'article',
+      url: 'https://huggingface.co/spaces/a/b',
+    })
+  ).toContain('互动应用')
+  expect(
+    classify({
+      platform: 'x',
+      kind: 'article',
+      url: 'https://huggingface.co/docs/a',
+    })
+  ).toBeUndefined()
+  expect(
+    classify({
+      platform: 'rss',
+      kind: 'article',
+      url: 'https://example.com/article',
+      error: 'HTTP 403',
+    })
+  ).toBeUndefined()
+  expect(
+    classify({
+      platform: 'rss',
+      kind: 'article',
+      url: 'https://example.com/article',
+      error: 'ECONNRESET',
+    })
+  ).toBeUndefined()
+  expect(
+    classify({
+      platform: 'rss',
+      kind: 'article',
+      url: 'https://example.com/download',
+      error: 'Article response is not HTML: application/pdf',
+    })
+  ).toContain('暂不支持')
+  expect(
+    classify({ platform: 'youtube', kind: 'video', processMedia: true })
+  ).toBeUndefined()
 })

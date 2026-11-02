@@ -1,7 +1,9 @@
 import {
+  appendFile,
   mkdir,
   open,
   readFile,
+  readdir,
   rename,
   unlink,
   writeFile,
@@ -17,12 +19,29 @@ export interface CollectionRun {
   startedAt: string
   updatedAt: string
   endedAt?: string
+  phase?: 'scanning' | 'analyzing' | 'translating' | 'finished'
+  phaseStartedAt?: Partial<
+    Record<'scanning' | 'analyzing' | 'translating', string>
+  >
+  scanningEndedAt?: string
+  translated?: number
+  translationFailed?: number
+  requests?: {
+    count: number
+    durationMs: number
+    estimatedCostUsd: number
+    unknownPriceCount: number
+  }
   sources: Array<
     SourceRunResult & {
       name: string
       status: 'pending' | 'running' | 'completed'
       newlyCompleted?: number
       existingCompleted?: number
+      newlyInflow?: number
+      duplicates?: number
+      discoveryPending?: boolean
+      discoveryError?: string
     }
   >
   message?: string
@@ -60,6 +79,59 @@ export function addCollectionRunEvent(
 }
 
 const file = (root: string) => path.join(root, 'collection-run.json')
+export async function readCollectionHistory(
+  root: string
+): Promise<CollectionRun[]> {
+  const directory = path.join(root, 'collection-runs')
+  let names: string[]
+  try {
+    names = await readdir(directory)
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return []
+    throw error
+  }
+  const runs = await Promise.all(
+    names
+      .filter((name) => name.endsWith('.json'))
+      .map(
+        async (name) =>
+          JSON.parse(
+            await readFile(path.join(directory, name), 'utf8')
+          ) as CollectionRun
+      )
+  )
+  return runs
+    .sort((a, b) => b.startedAt.localeCompare(a.startedAt))
+    .slice(0, 100)
+}
+
+export function collectionHistorySummary(run: CollectionRun): CollectionRun {
+  const sources = run.sources
+  return {
+    ...run,
+    events: [],
+    sources: [
+      {
+        sourceId: 'all',
+        name: '全部信源',
+        status: 'completed',
+        discovered: sources.reduce((sum, source) => sum + source.discovered, 0),
+        completed: sources.reduce((sum, source) => sum + source.completed, 0),
+        failed: sources.reduce((sum, source) => sum + source.failed, 0),
+        skipped: sources.reduce((sum, source) => sum + source.skipped, 0),
+        newlyCompleted: sources.reduce(
+          (sum, source) => sum + (source.newlyCompleted ?? 0),
+          0
+        ),
+        newlyInflow: sources.reduce(
+          (sum, source) => sum + (source.newlyInflow ?? 0),
+          0
+        ),
+        discoveryPending: sources.some((source) => source.discoveryPending),
+      },
+    ],
+  }
+}
 function alive(pid: number) {
   try {
     process.kill(pid, 0)
@@ -103,7 +175,15 @@ export async function beginCollectionRun(root: string, resume = false) {
   const handle = await open(lock, 'wx')
   await handle.writeFile(String(process.pid))
   await handle.close()
-  const previous = resume ? await readCollectionRun(root) : null
+  const lastRun = await readCollectionRun(root)
+  await mkdir(path.join(root, 'collection-runs'), { recursive: true })
+  if (lastRun) {
+    const archive = path.join(root, 'collection-runs', `${lastRun.id}.json`)
+    const temporary = `${archive}.${randomUUID()}.tmp`
+    await writeFile(temporary, JSON.stringify(lastRun), { mode: 0o600 })
+    await rename(temporary, archive)
+  }
+  const previous = resume ? lastRun : null
   const run: CollectionRun =
     previous?.status === 'interrupted'
       ? {
@@ -122,6 +202,43 @@ export async function beginCollectionRun(root: string, resume = false) {
           sources: [],
           events: [],
         }
+  if (resume) {
+    try {
+      const text = await readFile(
+        path.join(root, 'collection-runs', `${run.id}-requests.jsonl`),
+        'utf8'
+      )
+      if (text && !text.endsWith('\n'))
+        await appendFile(
+          path.join(root, 'collection-runs', `${run.id}-requests.jsonl`),
+          '\n'
+        )
+      const totals = {
+        count: 0,
+        durationMs: 0,
+        estimatedCostUsd: 0,
+        unknownPriceCount: 0,
+      }
+      for (const line of text.split('\n').filter(Boolean)) {
+        totals.count++
+        try {
+          const metric = JSON.parse(line) as {
+            durationMs?: number
+            estimatedCostUsd?: number
+          }
+          totals.durationMs += metric.durationMs ?? 0
+          if (typeof metric.estimatedCostUsd === 'number')
+            totals.estimatedCostUsd += metric.estimatedCostUsd
+          else totals.unknownPriceCount++
+        } catch {
+          totals.unknownPriceCount++
+        }
+      }
+      run.requests = totals
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+    }
+  }
   addCollectionRunEvent(run, {
     action:
       previous?.status === 'interrupted'
@@ -131,6 +248,7 @@ export async function beginCollectionRun(root: string, resume = false) {
     message: '开始执行本轮信源采集',
   })
   let pendingSave = Promise.resolve()
+  await mkdir(path.join(root, 'collection-runs'), { recursive: true })
   function save() {
     const currentSave = pendingSave.then(async () => {
       run.updatedAt = new Date().toISOString()
@@ -153,6 +271,10 @@ export async function beginCollectionRun(root: string, resume = false) {
           )
         }
       }
+      const archive = path.join(root, 'collection-runs', `${run.id}.json`)
+      const archiveTemporary = `${archive}.tmp`
+      await writeFile(archiveTemporary, JSON.stringify(run), { mode: 0o600 })
+      await rename(archiveTemporary, archive)
     })
     pendingSave = currentSave.catch(() => undefined)
     return currentSave
