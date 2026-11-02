@@ -6,6 +6,7 @@ import {
   readRoute,
   useBrowserUrl,
 } from '@/lib/navigation'
+import { useMobile } from '@/lib/use-mobile'
 import { readContentFilters, writeContentFilters } from '@/lib/content-location'
 import {
   useCallback,
@@ -427,18 +428,6 @@ function LogPanel({ contentId }: { contentId: string }) {
   )
 }
 
-function useMobile() {
-  const [mobile, setMobile] = useState(false)
-  useEffect(() => {
-    const media = matchMedia('(max-width: 1023px)')
-    const update = () => setMobile(media.matches)
-    update()
-    media.addEventListener('change', update)
-    return () => media.removeEventListener('change', update)
-  }, [])
-  return mobile
-}
-
 function FilterDropdown({
   value,
   onChange,
@@ -473,7 +462,7 @@ function FilterDropdown({
             <DropdownMenuRadioItem
               key={option.value}
               value={option.value}
-              className='text-xs'
+              className='text-xs max-lg:min-h-11 max-lg:text-sm'
             >
               {option.label}
             </DropdownMenuRadioItem>
@@ -500,6 +489,7 @@ export function ContentCard({
   selected,
   onOpen,
   onFavorite,
+  favoritePending = false,
   compact = false,
   href,
 }: {
@@ -507,6 +497,7 @@ export function ContentCard({
   selected?: boolean
   onOpen?: () => void
   onFavorite?: () => void
+  favoritePending?: boolean
   compact?: boolean
   href?: string
 }) {
@@ -517,6 +508,7 @@ export function ContentCard({
     <HoverCard openDelay={350} closeDelay={150}>
       <HoverCardTrigger asChild>
         <article
+          data-slot='content-card'
           tabIndex={0}
           className={`group relative flex min-w-0 cursor-pointer flex-col overflow-hidden rounded-sm border bg-card p-3 outline-none transition-colors hover:bg-foreground/[0.025] focus-visible:ring-2 focus-visible:ring-ring ${compact ? 'min-h-28' : ''} ${selected ? 'bg-foreground/[0.045]' : ''}`}
           onClick={onOpen}
@@ -580,7 +572,7 @@ export function ContentCard({
             </div>
           </div>
           {item.kind !== 'short_post' && item.title && (
-            <h2 className='mb-1 line-clamp-2 shrink-0 text-sm font-semibold leading-5 text-foreground'>
+            <h2 className='mb-1 line-clamp-3 shrink-0 text-base font-semibold leading-6 lg:line-clamp-2 lg:text-sm lg:leading-5 text-foreground'>
               {href ? (
                 <a
                   href={href}
@@ -601,12 +593,12 @@ export function ContentCard({
               {duration}
             </span>
           )}
-          <div className='max-h-48 overflow-hidden text-xs leading-5 text-foreground/85'>
+          <div className='max-h-48 overflow-hidden break-words text-sm leading-6 lg:text-xs lg:leading-5 text-foreground/85'>
             <CardBody item={item} />
           </div>
           <div className='mt-auto shrink-0 pt-2'>
-            <div className='flex items-center justify-between gap-2 pt-2 text-[11px] text-muted-foreground'>
-              <div className='flex min-w-0 items-center gap-2.5'>
+            <div className='flex flex-wrap items-center justify-between gap-2 pt-2 text-xs lg:text-[11px] text-muted-foreground'>
+              <div className='flex min-w-0 flex-wrap items-center gap-2.5'>
                 {item.publishedAt && (
                   <span className='shrink-0'>
                     {new Date(item.publishedAt).toLocaleDateString('zh-CN', {
@@ -632,18 +624,19 @@ export function ContentCard({
                   <Button
                     variant='ghost'
                     size='icon'
-                    className='size-8'
+                    className='size-11 lg:size-8'
                     aria-label={
                       item.utilizationActions.includes('favorite')
                         ? '取消收藏'
                         : '收藏'
                     }
+                    aria-pressed={item.utilizationActions.includes('favorite')}
                     title={
                       item.utilizationActions.includes('favorite')
                         ? '取消收藏'
                         : '收藏'
                     }
-                    disabled={item.junk.isJunk}
+                    disabled={item.junk.isJunk || favoritePending}
                     onClick={(event) => {
                       event.stopPropagation()
                       onFavorite()
@@ -663,7 +656,7 @@ export function ContentCard({
                     asChild
                     variant='ghost'
                     size='icon'
-                    className='size-8'
+                    className='size-11 lg:size-8'
                     onClick={(event) => event.stopPropagation()}
                   >
                     <a
@@ -751,19 +744,40 @@ export function Detail({
   onMove: (delta: number) => void
   onChanged: (item: FeedItem) => void
 }) {
+  const mobile = useMobile()
+  const returnButtonRef = useRef<HTMLButtonElement>(null)
+  useEffect(() => {
+    if (mobile) returnButtonRef.current?.focus({ preventScroll: true })
+  }, [mobile, item.id])
   const [junkOpen, setJunkOpen] = useState(false)
   const [reason, setReason] = useState('advertising')
   const [note, setNote] = useState('')
   const [operationMessage, setOperationMessage] = useState('')
+  const actionLock = useRef(false)
+  const [actionPending, setActionPending] = useState(false)
   async function toggleAction(action: UtilizationAction) {
     const actions = item.utilizationActions.includes(action)
       ? item.utilizationActions.filter((value) => value !== action)
       : [...item.utilizationActions, action]
-    await post(`/api/contents/${encodeURIComponent(item.id)}/actions`, {
-      actions,
-    })
-    onChanged({ ...item, utilizationActions: actions })
+    if (actionLock.current) return
+    actionLock.current = true
+    setActionPending(true)
+    setOperationMessage('')
+    try {
+      await post(`/api/contents/${encodeURIComponent(item.id)}/actions`, {
+        actions,
+      })
+      onChanged({ ...item, utilizationActions: actions })
+    } catch (reason) {
+      setOperationMessage(
+        `保存失败，请重试：${reason instanceof Error ? reason.message : String(reason)}`
+      )
+    } finally {
+      actionLock.current = false
+      setActionPending(false)
+    }
   }
+
   async function markJunk(isJunk: boolean) {
     await post(
       `/api/contents/${encodeURIComponent(item.id)}/junk`,
@@ -840,7 +854,7 @@ export function Detail({
       side='right'
       collapsible='none'
       aria-label='内容详情侧栏'
-      className='h-full min-h-0 bg-background'
+      className='h-full min-h-0 bg-background pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)]'
     >
       <Tabs
         key={item.id}
@@ -848,8 +862,49 @@ export function Detail({
         className='h-full min-h-0 gap-0'
       >
         <SidebarHeader className='gap-0 border-b p-0'>
-          <div className='flex h-12 min-w-0 items-center gap-1 px-2'>
-            <div className='flex shrink-0 items-center gap-1.5 pl-1'>
+          <div className='flex h-14 min-w-0 items-center gap-1 px-2 lg:h-12'>
+            {mobile && (
+              <>
+                <Button
+                  variant='ghost'
+                  className='h-11 shrink-0 px-2 lg:hidden'
+                  onClick={onClose}
+                  ref={returnButtonRef}
+                  aria-label='返回列表'
+                >
+                  <ChevronLeft />
+                  返回
+                </Button>
+                <Button
+                  variant={
+                    item.utilizationActions.includes('favorite')
+                      ? 'secondary'
+                      : 'ghost'
+                  }
+                  className='h-11 shrink-0 px-2 lg:hidden'
+                  aria-label={
+                    item.utilizationActions.includes('favorite')
+                      ? '取消收藏'
+                      : '收藏'
+                  }
+                  aria-pressed={item.utilizationActions.includes('favorite')}
+                  disabled={item.junk.isJunk || actionPending}
+                  onClick={() => void toggleAction('favorite')}
+                >
+                  <Bookmark
+                    className={
+                      item.utilizationActions.includes('favorite')
+                        ? 'fill-current'
+                        : ''
+                    }
+                  />
+                  {item.utilizationActions.includes('favorite')
+                    ? '已收藏'
+                    : '收藏'}
+                </Button>
+              </>
+            )}
+            <div className='hidden shrink-0 items-center gap-1.5 pl-1 lg:flex'>
               <Badge>{scoreLabel(item)}</Badge>
               {item.kind && (
                 <Badge variant='secondary'>{kindLabels[item.kind]}</Badge>
@@ -861,7 +916,7 @@ export function Detail({
                 {item.source?.name ?? '未知信源'}
               </span>
             </div>
-            <div className='no-scrollbar flex min-w-0 flex-1 items-center gap-0.5 overflow-x-auto'>
+            <div className='no-scrollbar flex min-w-0 flex-1 items-center gap-0.5 overflow-x-auto max-lg:[&_button]:size-11 max-lg:[&_a]:size-11'>
               <Button
                 variant={
                   item.utilizationActions.includes('favorite')
@@ -869,11 +924,11 @@ export function Detail({
                     : 'ghost'
                 }
                 size='icon'
-                className='size-8'
+                className='hidden size-8 lg:inline-flex'
                 aria-label='收藏'
                 aria-pressed={item.utilizationActions.includes('favorite')}
                 title='收藏'
-                disabled={item.junk.isJunk}
+                disabled={item.junk.isJunk || actionPending}
                 onClick={() => void toggleAction('favorite')}
               >
                 <Star
@@ -950,7 +1005,7 @@ export function Detail({
                 </Button>
               )}
             </div>
-            <div className='ml-auto flex shrink-0 items-center gap-0.5 border-l pl-1'>
+            <div className='ml-auto hidden shrink-0 lg:flex items-center gap-0.5 border-l pl-1'>
               <Button
                 aria-label='上一篇'
                 title='上一篇'
@@ -1018,7 +1073,13 @@ export function Detail({
                 </div>
               </div>
             )}
-            <h2 className='line-clamp-2 text-xl font-semibold leading-tight'>
+            <div className='mb-2 flex min-w-0 items-center gap-2 text-xs text-muted-foreground lg:hidden'>
+              <Badge>{scoreLabel(item)}</Badge>
+              <span className='truncate'>
+                {item.source?.name ?? '未知信源'}
+              </span>
+            </div>
+            <h2 className='text-lg font-semibold leading-snug lg:line-clamp-2 lg:text-xl lg:leading-tight'>
               {listTitle(item)}
             </h2>
             <div
@@ -1054,7 +1115,10 @@ export function Detail({
               </span>
             </div>
             {operationMessage && (
-              <p className='mt-3 border-l-2 border-foreground/30 bg-foreground/[0.025] p-2 text-xs'>
+              <p
+                role='status'
+                className='mt-3 border-l-2 border-foreground/30 bg-foreground/[0.025] p-2 text-xs'
+              >
                 {operationMessage}
               </p>
             )}
@@ -1623,6 +1687,11 @@ export function ContentWorkspace({ scope }: { scope: ContentScope }) {
   })
   const scrollRef = useRef<HTMLDivElement>(null)
   const scrollPosition = useRef(0)
+  const [filtersOpen, setFiltersOpen] = useState(false)
+  const [customDateOpen, setCustomDateOpen] = useState(false)
+  const favoriteLocks = useRef(new Set<string>())
+  const [favoritePending, setFavoritePending] = useState<Set<string>>(new Set())
+  const [favoriteError, setFavoriteError] = useState('')
   const mobile = useMobile()
   const defaultLayout = useMemo(() => {
     try {
@@ -1704,11 +1773,25 @@ export function ContentWorkspace({ scope }: { scope: ContentScope }) {
     const actions = item.utilizationActions.includes('favorite')
       ? item.utilizationActions.filter((value) => value !== 'favorite')
       : [...item.utilizationActions, 'favorite' as const]
-    await post(`/api/contents/${encodeURIComponent(item.id)}/actions`, {
-      actions,
-    })
-    changed({ ...item, utilizationActions: actions })
+    if (favoriteLocks.current.has(item.id)) return
+    favoriteLocks.current.add(item.id)
+    setFavoritePending(new Set(favoriteLocks.current))
+    setFavoriteError('')
+    try {
+      await post(`/api/contents/${encodeURIComponent(item.id)}/actions`, {
+        actions,
+      })
+      changed({ ...item, utilizationActions: actions })
+    } catch (reason) {
+      setFavoriteError(
+        `收藏保存失败，请重试：${reason instanceof Error ? reason.message : String(reason)}`
+      )
+    } finally {
+      favoriteLocks.current.delete(item.id)
+      setFavoritePending(new Set(favoriteLocks.current))
+    }
   }
+
   const setFilter = (key: keyof ContentFilters, value: string) =>
     setFilters((current) => ({ ...current, [key]: value }))
   const setDatePreset = (preset: string, days?: number) => {
@@ -1815,6 +1898,7 @@ export function ContentWorkspace({ scope }: { scope: ContentScope }) {
       compact={showingDetail}
       href={itemHref(item.id)}
       onOpen={() => open(item)}
+      favoritePending={favoritePending.has(item.id)}
       onFavorite={() => void toggleFavorite(item)}
     />
   )
@@ -1835,6 +1919,10 @@ export function ContentWorkspace({ scope }: { scope: ContentScope }) {
     const container = scrollRef.current
     if (!container) return
     const updateColumns = () => {
+      if (mobile) {
+        setMasonryColumns(1)
+        return
+      }
       const availableWidth = container.clientWidth - 32 // p-4 on both sides
       const gap = 12 // gap-3
       setMasonryColumns(
@@ -1856,7 +1944,11 @@ export function ContentWorkspace({ scope }: { scope: ContentScope }) {
   }, [selected, items, viewMode, scrollStorageKey, mobile, masonryColumns])
   const renderMasonry = (group: FeedItem[]) => (
     <div data-view='masonry' className='w-full'>
-      <Masonry columnsCount={masonryColumns} gutter='12px' sequential>
+      <Masonry
+        columnsCount={mobile ? 1 : masonryColumns}
+        gutter='12px'
+        sequential
+      >
         {group.map((item) => (
           <div key={item.id}>{renderCard(item)}</div>
         ))}
@@ -1958,7 +2050,7 @@ export function ContentWorkspace({ scope }: { scope: ContentScope }) {
                         ? '取消收藏'
                         : '收藏'
                     }
-                    disabled={item.junk.isJunk}
+                    disabled={item.junk.isJunk || favoritePending.has(item.id)}
                     onClick={(event) => {
                       event.stopPropagation()
                       void toggleFavorite(item)
@@ -2039,183 +2131,286 @@ export function ContentWorkspace({ scope }: { scope: ContentScope }) {
       ? `${filters.dateFrom.slice(5)}–${filters.dateTo.slice(5)}`
       : (datePresets.find((preset) => preset.value === filters.datePreset)
           ?.label ?? '日期')
+  const dateRangePicker = (
+    <Calendar
+      mode='range'
+      selected={customRange}
+      onSelect={(value) => {
+        setCustomRange(value)
+        if (value?.from && value.to) {
+          setFilters((current) => ({
+            ...current,
+            datePreset: 'custom',
+            dateFrom: formatLocalDate(value.from!),
+            dateTo: formatLocalDate(value.to!),
+          }))
+        }
+      }}
+      numberOfMonths={mobile ? 1 : 2}
+    />
+  )
+  const FilterGroup = mobile ? 'div' : ButtonGroup
+  const activeFilterCount = [
+    filters.kind !== 'all',
+    filters.recommendation !== 'all',
+    filters.sourceType !== 'all',
+    filters.datePreset !== 'all',
+    filters.processStatus !== 'all',
+    filters.read !== 'all',
+  ].filter(Boolean).length
   const list = (
     <div className='flex h-full w-full min-w-0 max-w-[100vw] flex-col overflow-hidden bg-background'>
-      <PageHeader title={title} description={`${visible.length} 条真实内容`}>
-        <div className='relative w-full min-w-28 sm:w-auto sm:flex-1 sm:basis-36 sm:max-w-[168px]'>
-          <Search className='pointer-events-none absolute left-2.5 top-2 size-3.5 text-muted-foreground' />
+      <Dialog open={customDateOpen} onOpenChange={setCustomDateOpen}>
+        <DialogContent className='max-w-[calc(100vw-2rem)] p-3 sm:max-w-sm'>
+          <DialogHeader>
+            <DialogTitle>选择日期范围</DialogTitle>
+            <DialogDescription>
+              选择开始和结束日期，筛选列表中的内容。
+            </DialogDescription>
+          </DialogHeader>
+          <div className='flex justify-center'>{dateRangePicker}</div>
+          <Button className='h-11' onClick={() => setCustomDateOpen(false)}>
+            完成
+          </Button>
+        </DialogContent>
+      </Dialog>
+
+      <PageHeader
+        title={title}
+        description={`${visible.length} 条真实内容`}
+        className='max-lg:[&>div:last-child]:basis-full'
+      >
+        <div className='relative min-w-0 flex-1 lg:w-auto lg:min-w-28 lg:basis-36 lg:max-w-[168px]'>
+          <Search className='pointer-events-none absolute left-2.5 top-3.5 size-4 lg:top-2 lg:size-3.5 text-muted-foreground' />
           <Input
             value={filters.query}
             onChange={(event) => setFilter('query', event.target.value)}
             placeholder='搜索内容'
-            className='h-8 pl-8 text-xs shadow-none'
+            aria-label='搜索内容'
+            className='h-11 pl-8 text-base shadow-none lg:h-8 lg:text-xs'
           />
         </div>
 
-        <ButtonGroup aria-label='内容搜索与筛选' className='shrink-0'>
-          <FilterDropdown
-            label='内容类型'
-            value={filters.kind ?? 'all'}
-            onChange={(value) => setFilter('kind', value)}
-            options={kindFilters.map((filter) => ({
-              ...filter,
-              label: filter.value === 'all' ? '全部类型' : filter.label,
-            }))}
-          />
+        <Button
+          variant={filtersOpen ? 'secondary' : 'outline'}
+          className='h-11 shrink-0 lg:hidden'
+          aria-expanded={filtersOpen}
+          aria-controls='content-filters'
+          onClick={() => setFiltersOpen((value) => !value)}
+        >
+          <SlidersHorizontal />
+          筛选{activeFilterCount > 0 && ` · ${activeFilterCount}`}
+        </Button>
+        <div
+          id='content-filters'
+          className={`${mobile && !filtersOpen ? 'hidden' : 'flex'} min-w-0 max-lg:w-full max-lg:max-h-[45svh] max-lg:overflow-y-auto`}
+        >
+          <FilterGroup
+            role='group'
+            aria-label='内容搜索与筛选'
+            className='shrink-0 max-lg:grid max-lg:grid-cols-2 max-lg:w-full max-lg:gap-2 max-lg:[&>button]:h-11 max-lg:[&>button]:max-w-none max-lg:[&>button]:justify-start max-lg:[&>button]:text-sm'
+          >
+            <FilterDropdown
+              label='内容类型'
+              value={filters.kind ?? 'all'}
+              onChange={(value) => setFilter('kind', value)}
+              options={kindFilters.map((filter) => ({
+                ...filter,
+                label: filter.value === 'all' ? '全部类型' : filter.label,
+              }))}
+            />
 
-          <FilterDropdown
-            label='推荐等级'
-            value={filters.recommendation}
-            onChange={(value) => setFilter('recommendation', value)}
-            options={recommendationFilters}
-          />
+            <FilterDropdown
+              label='推荐等级'
+              value={filters.recommendation}
+              onChange={(value) => setFilter('recommendation', value)}
+              options={recommendationFilters}
+            />
 
-          <FilterDropdown
-            label='评分'
-            value={filters.sort ?? 'newest'}
-            onChange={(value) => setFilter('sort', value)}
-            icon={ArrowDownWideNarrow}
-            options={[
-              { value: 'score-desc', label: '评分最高' },
-              { value: 'newest', label: '最新发布' },
-              { value: 'oldest', label: '最早发布' },
-            ]}
-          />
+            <FilterDropdown
+              label='评分'
+              value={filters.sort ?? 'newest'}
+              onChange={(value) => setFilter('sort', value)}
+              icon={ArrowDownWideNarrow}
+              options={[
+                { value: 'score-desc', label: '评分最高' },
+                { value: 'newest', label: '最新发布' },
+                { value: 'oldest', label: '最早发布' },
+              ]}
+            />
 
-          <FilterDropdown
-            label='平台'
-            value={filters.sourceType ?? 'all'}
-            onChange={(value) => setFilter('sourceType', value)}
-            options={sourceOptions}
-          />
+            <FilterDropdown
+              label='平台'
+              value={filters.sourceType ?? 'all'}
+              onChange={(value) => setFilter('sourceType', value)}
+              options={sourceOptions}
+            />
 
-          <DropdownMenu modal={false}>
-            <DropdownMenuTrigger asChild>
-              <Button
-                variant='outline'
-                size='sm'
-                className='h-8 max-w-32 gap-1.5 px-2.5 text-xs font-normal shadow-none'
-                aria-label='日期范围'
-              >
-                <CalendarDays className='size-3.5 shrink-0' />
-                <span className='truncate'>{dateLabel}</span>
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align='end' className='w-40'>
-              <DropdownMenuLabel className='text-xs'>
-                日期范围
-              </DropdownMenuLabel>
-              <DropdownMenuSeparator />
-              <DropdownMenuItem
-                className='text-xs'
-                onSelect={() => setDatePreset('all')}
-              >
-                不限时间
-                {filters.datePreset === 'all' && (
-                  <Check className='ml-auto size-3' />
-                )}
-              </DropdownMenuItem>
-              {datePresets.map((preset) => (
-                <DropdownMenuItem
-                  key={preset.value}
-                  className='text-xs'
-                  onSelect={() => setDatePreset(preset.value, preset.days)}
+            <DropdownMenu modal={false}>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  variant='outline'
+                  size='sm'
+                  className='h-8 max-w-32 gap-1.5 px-2.5 text-xs font-normal shadow-none'
+                  aria-label='日期范围'
                 >
-                  {preset.label}
-                  {filters.datePreset === preset.value && (
+                  <CalendarDays className='size-3.5 shrink-0' />
+                  <span className='truncate'>{dateLabel}</span>
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align='end' className='w-40'>
+                <DropdownMenuLabel className='text-xs max-lg:min-h-11 max-lg:text-sm'>
+                  日期范围
+                </DropdownMenuLabel>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem
+                  className='text-xs max-lg:min-h-11 max-lg:text-sm'
+                  onSelect={() => setDatePreset('all')}
+                >
+                  不限时间
+                  {filters.datePreset === 'all' && (
                     <Check className='ml-auto size-3' />
                   )}
                 </DropdownMenuItem>
-              ))}
-              <DropdownMenuSub>
-                <DropdownMenuSubTrigger className='text-xs'>
-                  自定义
-                  {filters.datePreset === 'custom' && (
-                    <Check className='ml-auto mr-2 size-3' />
-                  )}
-                </DropdownMenuSubTrigger>
-                <DropdownMenuSubContent className='w-auto p-0'>
-                  <Calendar
-                    mode='range'
-                    selected={customRange}
-                    onSelect={(value) => {
-                      setCustomRange(value)
-                      if (value?.from && value.to) {
-                        setFilters((current) => ({
-                          ...current,
-                          datePreset: 'custom',
-                          dateFrom: formatLocalDate(value.from!),
-                          dateTo: formatLocalDate(value.to!),
-                        }))
-                      }
-                    }}
-                    numberOfMonths={2}
-                  />
-                </DropdownMenuSubContent>
-              </DropdownMenuSub>
-            </DropdownMenuContent>
-          </DropdownMenu>
-
-          <DropdownMenu modal={false}>
-            <DropdownMenuTrigger asChild>
-              <Button
-                variant={advancedFilterActive ? 'secondary' : 'outline'}
-                size='sm'
-                className='h-8 gap-1.5 px-2.5 text-xs font-normal shadow-none'
-                aria-label='更多筛选'
-              >
-                <SlidersHorizontal className='size-3.5' />
-                筛选
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align='end' className='w-44'>
-              <DropdownMenuSub>
-                <DropdownMenuSubTrigger className='text-xs'>
-                  处理状态
-                </DropdownMenuSubTrigger>
-                <DropdownMenuSubContent className='w-40'>
-                  <DropdownMenuRadioGroup
-                    value={filters.processStatus}
-                    onValueChange={(value) => setFilter('processStatus', value)}
+                {datePresets.map((preset) => (
+                  <DropdownMenuItem
+                    key={preset.value}
+                    className='text-xs max-lg:min-h-11 max-lg:text-sm'
+                    onSelect={() => setDatePreset(preset.value, preset.days)}
                   >
-                    {processOptions.map((option) => (
-                      <DropdownMenuRadioItem
-                        key={option.value}
-                        value={option.value}
-                        className='text-xs'
+                    {preset.label}
+                    {filters.datePreset === preset.value && (
+                      <Check className='ml-auto size-3' />
+                    )}
+                  </DropdownMenuItem>
+                ))}
+                {mobile ? (
+                  <DropdownMenuItem
+                    className='min-h-11 text-sm'
+                    onSelect={() => setCustomDateOpen(true)}
+                  >
+                    自定义
+                  </DropdownMenuItem>
+                ) : (
+                  <DropdownMenuSub>
+                    <DropdownMenuSubTrigger className='text-xs max-lg:min-h-11 max-lg:text-sm'>
+                      自定义
+                      {filters.datePreset === 'custom' && (
+                        <Check className='ml-auto mr-2 size-3' />
+                      )}
+                    </DropdownMenuSubTrigger>
+                    <DropdownMenuSubContent className='w-auto p-0'>
+                      {dateRangePicker}
+                    </DropdownMenuSubContent>
+                  </DropdownMenuSub>
+                )}
+              </DropdownMenuContent>
+            </DropdownMenu>
+
+            {mobile ? (
+              <>
+                <select
+                  aria-label='处理状态'
+                  className='h-11 min-w-0 w-full rounded-md border bg-background px-2 text-sm'
+                  value={filters.processStatus}
+                  onChange={(event) =>
+                    setFilter('processStatus', event.target.value)
+                  }
+                >
+                  {processOptions.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+                <select
+                  aria-label='阅读状态'
+                  className='h-11 min-w-0 w-full rounded-md border bg-background px-2 text-sm'
+                  value={filters.read}
+                  onChange={(event) => setFilter('read', event.target.value)}
+                >
+                  <option value='all'>全部阅读</option>
+                  <option value='unread'>未读</option>
+                  <option value='read'>已读</option>
+                </select>
+              </>
+            ) : (
+              <DropdownMenu modal={false}>
+                <DropdownMenuTrigger asChild>
+                  <Button
+                    variant={advancedFilterActive ? 'secondary' : 'outline'}
+                    size='sm'
+                    className='h-8 gap-1.5 px-2.5 text-xs font-normal shadow-none'
+                    aria-label='更多筛选'
+                  >
+                    <SlidersHorizontal className='size-3.5' />
+                    筛选
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align='end' className='w-44'>
+                  <DropdownMenuSub>
+                    <DropdownMenuSubTrigger className='text-xs max-lg:min-h-11 max-lg:text-sm'>
+                      处理状态
+                    </DropdownMenuSubTrigger>
+                    <DropdownMenuSubContent className='w-40'>
+                      <DropdownMenuRadioGroup
+                        value={filters.processStatus}
+                        onValueChange={(value) =>
+                          setFilter('processStatus', value)
+                        }
                       >
-                        {option.label}
-                      </DropdownMenuRadioItem>
-                    ))}
-                  </DropdownMenuRadioGroup>
-                </DropdownMenuSubContent>
-              </DropdownMenuSub>
-              <DropdownMenuSub>
-                <DropdownMenuSubTrigger className='text-xs'>
-                  阅读状态
-                </DropdownMenuSubTrigger>
-                <DropdownMenuSubContent className='w-36'>
-                  <DropdownMenuRadioGroup
-                    value={filters.read}
-                    onValueChange={(value) => setFilter('read', value)}
-                  >
-                    <DropdownMenuRadioItem value='all' className='text-xs'>
-                      全部阅读
-                    </DropdownMenuRadioItem>
-                    <DropdownMenuRadioItem value='unread' className='text-xs'>
-                      未读
-                    </DropdownMenuRadioItem>
-                    <DropdownMenuRadioItem value='read' className='text-xs'>
-                      已读
-                    </DropdownMenuRadioItem>
-                  </DropdownMenuRadioGroup>
-                </DropdownMenuSubContent>
-              </DropdownMenuSub>
-            </DropdownMenuContent>
-          </DropdownMenu>
-        </ButtonGroup>
+                        {processOptions.map((option) => (
+                          <DropdownMenuRadioItem
+                            key={option.value}
+                            value={option.value}
+                            className='text-xs max-lg:min-h-11 max-lg:text-sm'
+                          >
+                            {option.label}
+                          </DropdownMenuRadioItem>
+                        ))}
+                      </DropdownMenuRadioGroup>
+                    </DropdownMenuSubContent>
+                  </DropdownMenuSub>
+                  <DropdownMenuSub>
+                    <DropdownMenuSubTrigger className='text-xs max-lg:min-h-11 max-lg:text-sm'>
+                      阅读状态
+                    </DropdownMenuSubTrigger>
+                    <DropdownMenuSubContent className='w-36'>
+                      <DropdownMenuRadioGroup
+                        value={filters.read}
+                        onValueChange={(value) => setFilter('read', value)}
+                      >
+                        <DropdownMenuRadioItem
+                          value='all'
+                          className='text-xs max-lg:min-h-11 max-lg:text-sm'
+                        >
+                          全部阅读
+                        </DropdownMenuRadioItem>
+                        <DropdownMenuRadioItem
+                          value='unread'
+                          className='text-xs max-lg:min-h-11 max-lg:text-sm'
+                        >
+                          未读
+                        </DropdownMenuRadioItem>
+                        <DropdownMenuRadioItem
+                          value='read'
+                          className='text-xs max-lg:min-h-11 max-lg:text-sm'
+                        >
+                          已读
+                        </DropdownMenuRadioItem>
+                      </DropdownMenuRadioGroup>
+                    </DropdownMenuSubContent>
+                  </DropdownMenuSub>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            )}
+          </FilterGroup>
+        </div>
 
-        <ButtonGroup aria-label='内容展示方式' className='shrink-0'>
+        <ButtonGroup
+          aria-label='内容展示方式'
+          className='hidden shrink-0 lg:flex'
+        >
           {viewMode === 'masonry' && (
             <DropdownMenu modal={false}>
               <DropdownMenuTrigger asChild>
@@ -2240,7 +2435,7 @@ export function ContentWorkspace({ scope }: { scope: ContentScope }) {
                     <DropdownMenuRadioItem
                       key={option.value}
                       value={option.value}
-                      className='text-xs'
+                      className='text-xs max-lg:min-h-11 max-lg:text-sm'
                     >
                       {option.label}
                     </DropdownMenuRadioItem>
@@ -2272,11 +2467,16 @@ export function ContentWorkspace({ scope }: { scope: ContentScope }) {
         </ButtonGroup>
       </PageHeader>
 
+      {favoriteError && (
+        <p role='alert' className='px-4 pb-2 text-sm text-destructive'>
+          {favoriteError}
+        </p>
+      )}
       <div
         ref={scrollRef}
         data-slot='content-list-scroll'
         onScroll={rememberPosition}
-        className='min-h-0 flex-1 overflow-y-auto overscroll-contain p-4 pb-20 lg:pb-4'
+        className='min-h-0 flex-1 overflow-y-auto overscroll-contain p-4 pb-[max(1rem,env(safe-area-inset-bottom))]'
       >
         {error ? (
           <p className='text-destructive'>读取失败：{error}</p>
@@ -2288,7 +2488,7 @@ export function ContentWorkspace({ scope }: { scope: ContentScope }) {
           </div>
         ) : (
           <div className='space-y-5'>
-            {viewMode === 'table'
+            {!mobile && viewMode === 'table'
               ? renderTable(visible)
               : renderMasonry(visible)}
           </div>
