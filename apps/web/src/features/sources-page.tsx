@@ -272,7 +272,14 @@ export function SourcesPage() {
                     className={`w-full p-4 text-left hover:bg-foreground/[0.025] ${selected === item.id ? 'bg-foreground/[0.05]' : ''}`}
                   >
                     <div className='flex justify-between gap-2'>
-                      <span className='font-medium'>{item.name}</span>
+                      <span className='font-medium'>
+                        {item.name}
+                        {item.metadata?.official && (
+                          <Badge variant='outline' className='ml-2'>
+                            官方账号
+                          </Badge>
+                        )}
+                      </span>
                       <Badge
                         variant={
                           item.health === 'healthy' ? 'secondary' : 'outline'
@@ -307,6 +314,28 @@ export function SourcesPage() {
                         内容语言：
                         {source.language === 'en' ? '英文' : '中文'}
                       </p>
+                      {source.metadata && (
+                        <div className='mt-3 space-y-2 text-sm text-muted-foreground'>
+                          {source.metadata.official && (
+                            <Badge variant='outline'>官方账号</Badge>
+                          )}
+                          <p>
+                            分类：{source.metadata.category} ·{' '}
+                            {source.metadata.secondaryCategory}
+                          </p>
+                          <p>账号类型：{source.metadata.accountType}</p>
+                          <p>
+                            面向受众：{source.metadata.audiences.join('、')}
+                          </p>
+                          <div className='flex flex-wrap gap-1'>
+                            {source.metadata.tags.map((tag) => (
+                              <Badge key={tag} variant='secondary'>
+                                {tag}
+                              </Badge>
+                            ))}
+                          </div>
+                        </div>
+                      )}
                     </div>
                     <div className='flex flex-wrap gap-2'>
                       <Button

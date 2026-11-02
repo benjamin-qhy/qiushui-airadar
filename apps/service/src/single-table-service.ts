@@ -146,6 +146,7 @@ function sourceItem(
     type: source.platform,
     language: source.language,
     externalIdentity: source.external_identity,
+    metadata: source.metadata,
     status: enabled ? ('enabled' as const) : ('disabled' as const),
     health: enabled ? ('healthy' as const) : ('disabled' as const),
     effectiveParameters: { ids: [], values: {} },
@@ -160,6 +161,7 @@ function sourceFromBody(body: Record<string, unknown>) {
     external_identity: body.externalIdentity,
     language: body.language,
     enabled: body.enabled !== false,
+    metadata: body.metadata,
   }
   return sourcesConfigSchema.parse({ sources: [candidate] }).sources[0]!
 }
@@ -1546,6 +1548,7 @@ export function createSingleTableServiceApp(options: {
                 return send(response, 200, { deleted: id })
               }
               const source = sourceFromBody({
+                metadata: config.sources.sources[index]!.metadata,
                 ...(await bodyOf(request)),
                 id,
               })

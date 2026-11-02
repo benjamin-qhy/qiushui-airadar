@@ -132,6 +132,16 @@ export const sourcesConfigSchema = z.object({
       external_identity: z.string().min(1),
       language: z.enum(['zh', 'en']),
       enabled: z.boolean(),
+      metadata: z
+        .object({
+          category: z.string(),
+          secondaryCategory: z.string(),
+          tags: z.array(z.string()),
+          audiences: z.array(z.string()),
+          accountType: z.string(),
+          official: z.boolean(),
+        })
+        .optional(),
     })
   ),
 })

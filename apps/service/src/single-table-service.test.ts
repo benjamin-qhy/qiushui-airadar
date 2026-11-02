@@ -653,6 +653,14 @@ it('manages sources, provider credentials, connection tests, and validated YAML'
     const created = await mutate('/api/sources', 'POST', {
       id: 'rss_management_test',
       type: 'rss',
+      metadata: {
+        category: '企业 AI',
+        secondaryCategory: '产品',
+        tags: ['官方账号'],
+        audiences: ['企业'],
+        accountType: '机构与产品账号',
+        official: true,
+      },
       name: '管理测试',
       externalIdentity: 'https://example.com/feed.xml',
       language: 'zh',
@@ -673,7 +681,16 @@ it('manages sources, provider credentials, connection tests, and validated YAML'
           response.json()
         )) as { items: Array<{ id: string; name: string; status: string }> }
       ).items.find((source) => source.id === 'rss_management_test')
-    ).toMatchObject({ name: '管理测试已修改', status: 'disabled' })
+    ).toMatchObject({
+      name: '管理测试已修改',
+      status: 'disabled',
+      metadata: {
+        category: '企业 AI',
+        tags: ['官方账号'],
+        audiences: ['企业'],
+        official: true,
+      },
+    })
 
     const providerTest = await mutate(
       '/api/providers/native-rss/test',

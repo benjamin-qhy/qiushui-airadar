@@ -103,6 +103,14 @@ export interface SourceItem {
   externalIdentity: string
   status: 'enabled' | 'disabled' | 'archived'
   health: 'healthy' | 'warning' | 'unavailable' | 'disabled'
+  metadata?: {
+    category: string
+    secondaryCategory: string
+    tags: string[]
+    audiences: string[]
+    accountType: string
+    official: boolean
+  }
   tags?: string[]
   notes?: string
   effectiveParameters: { ids: string[]; values: Record<string, unknown> }
