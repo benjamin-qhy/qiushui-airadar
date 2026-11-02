@@ -9,18 +9,28 @@ import {
   TooltipTrigger,
 } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
+import { useMobile } from '@/lib/use-mobile'
+import {
+  Sheet,
+  SheetContent,
+  SheetTitle,
+  SheetDescription,
+} from '@/components/ui/sheet'
 
 type SidebarContextValue = {
   open: boolean
   state: 'expanded' | 'collapsed'
   toggleSidebar: () => void
+  mobileOpen: boolean
+  setMobileOpen: (open: boolean) => void
 }
 
 const SidebarContext = React.createContext<SidebarContextValue | null>(null)
 
 function useSidebar() {
   const context = React.useContext(SidebarContext)
-  if (!context) throw new Error('useSidebar must be used within SidebarProvider')
+  if (!context)
+    throw new Error('useSidebar must be used within SidebarProvider')
   return context
 }
 
@@ -31,7 +41,12 @@ function SidebarProvider({
   ...props
 }: React.ComponentProps<'div'> & { defaultOpen?: boolean }) {
   const [open, setOpen] = React.useState(defaultOpen)
-  const toggleSidebar = React.useCallback(() => setOpen((value) => !value), [])
+  const [mobileOpen, setMobileOpen] = React.useState(false)
+  const mobile = useMobile()
+  const toggleSidebar = React.useCallback(() => {
+    if (mobile) setMobileOpen((value) => !value)
+    else setOpen((value) => !value)
+  }, [mobile])
 
   React.useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -49,8 +64,10 @@ function SidebarProvider({
       open,
       state: open ? 'expanded' : 'collapsed',
       toggleSidebar,
+      mobileOpen,
+      setMobileOpen,
     }),
-    [open, toggleSidebar]
+    [open, toggleSidebar, mobileOpen]
   )
 
   return (
@@ -82,7 +99,39 @@ function Sidebar({
   collapsible?: 'offcanvas' | 'none'
 }) {
   const context = React.useContext(SidebarContext)
-  const collapsed = collapsible === 'offcanvas' && context?.state === 'collapsed'
+  const mobile = useMobile()
+  const collapsed =
+    collapsible === 'offcanvas' && context?.state === 'collapsed'
+
+  if (collapsible === 'offcanvas' && mobile && context) {
+    return (
+      <Sheet open={context.mobileOpen} onOpenChange={context.setMobileOpen}>
+        <SheetContent
+          side={side}
+          data-slot='sidebar'
+          id='mobile-navigation'
+          closeLabel='关闭菜单'
+          className='group/sidebar data-[state=open]:animate-none data-[state=closed]:animate-none w-[min(20rem,85vw)] gap-0 pb-[env(safe-area-inset-bottom)] pt-[env(safe-area-inset-top)] [&>[data-slot=sidebar-header]_button]:hidden [&>button]:size-11 [&>button]:top-2 [&>button]:end-2 [&>button]:flex [&>button]:items-center [&>button]:justify-center'
+          onClickCapture={(event) => {
+            if ((event.target as Element).closest('a'))
+              context.setMobileOpen(false)
+          }}
+          onCloseAutoFocus={(event) => {
+            event.preventDefault()
+            document
+              .querySelector<HTMLButtonElement>('[data-sidebar-mobile-trigger]')
+              ?.focus()
+          }}
+        >
+          <SheetTitle className='sr-only'>导航菜单</SheetTitle>
+          <SheetDescription className='sr-only'>
+            选择内容、管理或系统页面
+          </SheetDescription>
+          {children}
+        </SheetContent>
+      </Sheet>
+    )
+  }
 
   return (
     <aside
@@ -121,7 +170,10 @@ function SidebarContent({ className, ...props }: React.ComponentProps<'div'>) {
   return (
     <div
       data-slot='sidebar-content'
-      className={cn('min-h-0 flex-1 overflow-y-auto overscroll-contain', className)}
+      className={cn(
+        'min-h-0 flex-1 overflow-y-auto overscroll-contain',
+        className
+      )}
       {...props}
     />
   )
@@ -147,7 +199,10 @@ function SidebarGroup({ className, ...props }: React.ComponentProps<'div'>) {
   )
 }
 
-function SidebarGroupLabel({ className, ...props }: React.ComponentProps<'div'>) {
+function SidebarGroupLabel({
+  className,
+  ...props
+}: React.ComponentProps<'div'>) {
   return (
     <div
       data-slot='sidebar-group-label'
@@ -160,7 +215,10 @@ function SidebarGroupLabel({ className, ...props }: React.ComponentProps<'div'>)
   )
 }
 
-function SidebarGroupContent({ className, ...props }: React.ComponentProps<'div'>) {
+function SidebarGroupContent({
+  className,
+  ...props
+}: React.ComponentProps<'div'>) {
   return (
     <div
       data-slot='sidebar-group-content'
@@ -181,7 +239,13 @@ function SidebarMenu({ className, ...props }: React.ComponentProps<'ul'>) {
 }
 
 function SidebarMenuItem({ className, ...props }: React.ComponentProps<'li'>) {
-  return <li data-slot='sidebar-menu-item' className={cn('min-w-0', className)} {...props} />
+  return (
+    <li
+      data-slot='sidebar-menu-item'
+      className={cn('min-w-0', className)}
+      {...props}
+    />
+  )
 }
 
 function SidebarMenuButton({
@@ -191,7 +255,11 @@ function SidebarMenuButton({
   className,
   children,
   ...props
-}: React.ComponentProps<'button'> & { asChild?: boolean; isActive?: boolean; tooltip?: string }) {
+}: React.ComponentProps<'button'> & {
+  asChild?: boolean
+  isActive?: boolean
+  tooltip?: string
+}) {
   const context = React.useContext(SidebarContext)
   const Component = asChild ? Slot : 'button'
   const button = (
@@ -199,7 +267,7 @@ function SidebarMenuButton({
       data-slot='sidebar-menu-button'
       data-active={isActive}
       className={cn(
-        'flex h-9 w-full min-w-0 items-center gap-3 overflow-hidden rounded-md px-2 text-left text-sm outline-none transition-colors hover:bg-sidebar-accent focus-visible:ring-2 focus-visible:ring-sidebar-ring data-[active=true]:bg-sidebar-accent data-[active=true]:font-medium group-data-[state=collapsed]/sidebar:size-9 group-data-[state=collapsed]/sidebar:justify-center group-data-[state=collapsed]/sidebar:p-0 [&>svg]:size-4 [&>svg]:shrink-0 [&>span]:truncate group-data-[state=collapsed]/sidebar:[&>span]:hidden',
+        'flex h-11 lg:h-9 w-full min-w-0 items-center gap-3 overflow-hidden rounded-md px-2 text-left text-sm outline-none transition-colors hover:bg-sidebar-accent focus-visible:ring-2 focus-visible:ring-sidebar-ring data-[active=true]:bg-sidebar-accent data-[active=true]:font-medium group-data-[state=collapsed]/sidebar:size-9 group-data-[state=collapsed]/sidebar:justify-center group-data-[state=collapsed]/sidebar:p-0 [&>svg]:size-4 [&>svg]:shrink-0 [&>span]:truncate group-data-[state=collapsed]/sidebar:[&>span]:hidden',
         className
       )}
       {...props}
@@ -217,7 +285,10 @@ function SidebarMenuButton({
   )
 }
 
-function SidebarTrigger({ className, ...props }: React.ComponentProps<typeof Button>) {
+function SidebarTrigger({
+  className,
+  ...props
+}: React.ComponentProps<typeof Button>) {
   const { state, toggleSidebar } = useSidebar()
   const label = state === 'collapsed' ? '展开侧栏' : '折叠侧栏'
   return (
@@ -260,7 +331,10 @@ function SidebarInset({ className, ...props }: React.ComponentProps<'div'>) {
   return (
     <div
       data-slot='sidebar-inset'
-      className={cn('flex h-svh min-h-0 min-w-0 flex-1 flex-col overflow-hidden', className)}
+      className={cn(
+        'flex h-svh min-h-0 min-w-0 flex-1 flex-col overflow-hidden',
+        className
+      )}
       {...props}
     />
   )

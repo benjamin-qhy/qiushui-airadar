@@ -64,7 +64,6 @@ const navigationGroups: Array<{
     ],
   },
 ]
-const navigation = navigationGroups.flatMap((group) => group.items)
 
 export function AppShell({
   page,
@@ -133,20 +132,6 @@ export function AppShell({
         <main className='min-h-0 min-w-0 flex-1 overflow-hidden'>
           {children}
         </main>
-        <nav className='fixed inset-x-0 bottom-0 z-40 grid w-screen max-w-full grid-cols-10 border-t bg-background/95 px-1 py-1 backdrop-blur lg:hidden'>
-          {navigation.map(({ id, label, icon: Icon }) => (
-            <a
-              key={id}
-              aria-current={page === id ? 'page' : undefined}
-              className={`min-w-0 flex flex-col items-center gap-1 rounded-md py-2 text-[10px] ${page === id ? 'bg-foreground/[0.06] text-foreground' : 'text-muted-foreground'}`}
-              href={pageHref(id)}
-              onClick={(event) => followLink(event, () => onPage(id))}
-            >
-              <Icon className='size-4' />
-              <span className='w-full truncate px-0.5'>{label}</span>
-            </a>
-          ))}
-        </nav>
       </SidebarInset>
     </SidebarProvider>
   )
