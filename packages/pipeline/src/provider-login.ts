@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { builtinModels } from '@earendil-works/pi-ai/providers/all'
+import { createApplicationModels } from './pi-models.js'
 import type {
   AuthEvent,
   AuthPrompt,
@@ -13,7 +13,7 @@ export function createProviderLoginManager(
   injected?: Models,
   timeoutMs = 600_000
 ) {
-  const models = injected ?? builtinModels({ credentials })
+  const models = injected ?? createApplicationModels({ credentials })
   type Session = {
     id: string
     providerId: string

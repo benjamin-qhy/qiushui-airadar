@@ -7,7 +7,6 @@ import { isIP } from 'node:net'
 
 import { Readability } from '@mozilla/readability'
 import {
-  createModels,
   Type,
   type Api,
   type Credential,
@@ -16,7 +15,7 @@ import {
   type Model,
   type Models,
 } from '@earendil-works/pi-ai'
-import { openaiCodexProvider } from '@earendil-works/pi-ai/providers/openai-codex'
+import { createApplicationModels } from './pi-models.js'
 import { XMLParser } from 'fast-xml-parser'
 import { parseHTML } from 'linkedom'
 import { z } from 'zod'
@@ -1004,10 +1003,9 @@ export function createCodexPiGateway(
   authPath: string,
   modelId = rssAcceptanceModel
 ): ModelGateway {
-  const models = createModels({
+  const models = createApplicationModels({
     credentials: createReadOnlyCodexCredentialStore(authPath),
   })
-  models.setProvider(openaiCodexProvider())
   const model = models.getModel(codexProviderId, modelId)
   if (!model) throw new Error(`Pi model is unavailable: ${modelId}`)
   return createPiModelGateway(models, model)

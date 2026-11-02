@@ -789,14 +789,16 @@ it('manages sources, provider credentials, connection tests, and validated YAML'
     ).then((response) => response.json())) as {
       items: Array<Record<string, unknown>>
     }
-    expect(providersAfterCodex.items).toHaveLength(40)
+    expect(providersAfterCodex.items.map((provider) => provider.id)).toEqual(
+      expect.arrayContaining(['openai', 'openai-codex', 'deepseek'])
+    )
     expect(
       providersAfterCodex.items.find(
         (provider) => provider.id === 'openai-codex'
       )
     ).toMatchObject({
       id: 'openai-codex',
-      name: 'OpenAI Codex',
+      name: 'OpenAI Codex (legacy)',
       configured: false,
       pending: true,
       authPath: codexAuthPath,

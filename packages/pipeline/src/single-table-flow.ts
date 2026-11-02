@@ -3,17 +3,8 @@ import path from 'node:path'
 
 import { parse as parseYaml } from 'yaml'
 import { z } from 'zod'
-import {
-  createModels,
-  type CredentialStore,
-  type Model,
-} from '@earendil-works/pi-ai'
-import {
-  builtinModels,
-  getBuiltinModels,
-  getBuiltinProviders,
-} from '@earendil-works/pi-ai/providers/all'
-import { openaiCodexProvider } from '@earendil-works/pi-ai/providers/openai-codex'
+import type { CredentialStore, Model, Models } from '@earendil-works/pi-ai'
+import { createApplicationModels } from './pi-models.js'
 
 import type {
   SingleTableRepository,
@@ -121,8 +112,7 @@ export function listSingleTableCodexModels(): Array<{
   id: string
   name: string
 }> {
-  const models = createModels()
-  models.setProvider(openaiCodexProvider())
+  const models = createApplicationModels()
   return models
     .getModels('openai-codex')
     .map((model) => ({ id: model.id, name: model.name }))
@@ -146,7 +136,7 @@ export function listSingleTableModelProviders(): Array<{
   subscription: boolean
   modelCount: number
 }> {
-  const models = builtinModels()
+  const models = createApplicationModels()
   return models.getProviders().map((provider) => ({
     id: provider.id,
     name: provider.name,
@@ -167,11 +157,12 @@ export function listSingleTableModels(providerId: string): Array<{
   name: string
 }> {
   const normalized = normalizeSingleTableProviderId(providerId)
-  if (!getBuiltinProviders().includes(normalized as never)) return []
-  return getBuiltinModels(normalized as never).map((model) => ({
-    id: model.id,
-    name: model.name,
-  }))
+  return createApplicationModels()
+    .getModels(normalized)
+    .map((model) => ({
+      id: model.id,
+      name: model.name,
+    }))
 }
 
 export function createSingleTableModelGateway(
@@ -180,7 +171,7 @@ export function createSingleTableModelGateway(
   routing: string | SingleTableModelRouting
 ): SingleTableModelGateway {
   const normalizedProvider = normalizeSingleTableProviderId(providerId)
-  const models = builtinModels({ credentials })
+  const models = createApplicationModels({ credentials })
   const routes: SingleTableModelRouting =
     typeof routing === 'string' ? { default: routing } : routing
   const modelRoutes = [
@@ -202,7 +193,7 @@ export function createSingleTableModelGateway(
 }
 
 function createGateway(
-  models: ReturnType<typeof createModels>,
+  models: Models,
   providerId: string,
   routes: SingleTableModelRouting
 ): SingleTableModelGateway {
@@ -309,10 +300,9 @@ export function createSingleTableCodexGateway(
   authPath: string,
   routing: string | SingleTableModelRouting
 ): SingleTableModelGateway {
-  const models = createModels({
+  const models = createApplicationModels({
     credentials: createReadOnlyCodexCredentialStore(authPath),
   })
-  models.setProvider(openaiCodexProvider())
   const routes: SingleTableModelRouting =
     typeof routing === 'string' ? { default: routing } : routing
   const modelRoutes = [
