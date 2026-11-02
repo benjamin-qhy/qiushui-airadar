@@ -1,7 +1,17 @@
 import {
+  contentHref,
+  followLink,
+  listHref,
+  navigate,
+  readRoute,
+  useBrowserUrl,
+} from '@/lib/navigation'
+import { readContentFilters, writeContentFilters } from '@/lib/content-location'
+import {
   useCallback,
   useEffect,
   useMemo,
+  useLayoutEffect,
   useRef,
   useState,
   type MouseEvent,
@@ -485,12 +495,14 @@ export function ContentCard({
   onOpen,
   onFavorite,
   compact = false,
+  href,
 }: {
   item: FeedItem
   selected?: boolean
   onOpen?: () => void
   onFavorite?: () => void
   compact?: boolean
+  href?: string
 }) {
   const cover = contentCover(item)
   const duration = formatDuration(item.video?.durationSeconds)
@@ -533,7 +545,20 @@ export function ContentCard({
                   </span>
                 )}
                 <span className='truncate'>
-                  {item.source?.name ?? '未知信源'}
+                  {href ? (
+                    <a
+                      href={href}
+                      aria-label={`查看详情：${listTitle(item)}`}
+                      onClick={(event) => {
+                        event.stopPropagation()
+                        followLink(event, () => onOpen?.())
+                      }}
+                    >
+                      {item.source?.name ?? '未知信源'}
+                    </a>
+                  ) : (
+                    (item.source?.name ?? '未知信源')
+                  )}
                 </span>
                 <span aria-hidden='true'>·</span>
                 <span className='shrink-0 font-semibold text-foreground'>
@@ -550,7 +575,19 @@ export function ContentCard({
           </div>
           {item.kind !== 'short_post' && item.title && (
             <h2 className='mb-1 line-clamp-2 shrink-0 text-sm font-semibold leading-5 text-foreground'>
-              {listTitle(item)}
+              {href ? (
+                <a
+                  href={href}
+                  onClick={(event) => {
+                    event.stopPropagation()
+                    followLink(event, () => onOpen?.())
+                  }}
+                >
+                  {listTitle(item)}
+                </a>
+              ) : (
+                listTitle(item)
+              )}
             </h2>
           )}
           {duration && (
@@ -908,7 +945,7 @@ export function Detail({
                 <ChevronLeft />
               </Button>
               <span className='min-w-9 text-center text-xs text-muted-foreground'>
-                {index + 1}/{count}
+                {index < 0 ? '独立详情' : `${index + 1}/${count}`}
               </span>
               <Button
                 aria-label='下一篇'
@@ -916,7 +953,7 @@ export function Detail({
                 variant='ghost'
                 size='icon'
                 className='size-8'
-                disabled={index >= count - 1}
+                disabled={index < 0 || index >= count - 1}
                 onClick={() => onMove(1)}
               >
                 <ChevronRight />
@@ -1502,7 +1539,13 @@ export function ContentWorkspace({ scope }: { scope: ContentScope }) {
   }
   const [items, setItems] = useState<FeedItem[]>()
   const [error, setError] = useState('')
-  const [selected, setSelected] = useState<string>()
+  const url = useBrowserUrl()
+  const selected = readRoute(url).contentId
+  const [detail, setDetail] = useState<{
+    id: string
+    item?: FeedItem
+    error?: string
+  }>()
   const [viewMode, setViewMode] = useState<ContentViewMode>(() => {
     if (typeof localStorage === 'undefined') return 'masonry'
     return localStorage.getItem(`${viewStorageKey}:mode`) === 'table'
@@ -1514,7 +1557,7 @@ export function ContentWorkspace({ scope }: { scope: ContentScope }) {
     const saved = localStorage.getItem(`${viewStorageKey}:card-width`)
     return saved === 'small' || saved === 'large' ? saved : 'medium'
   })
-  const [filters, setFilters] = useState<ContentFilters>(() => {
+  const [savedFilters] = useState<ContentFilters>(() => {
     const saved = initial()
     return {
       query: '',
@@ -1531,6 +1574,17 @@ export function ContentWorkspace({ scope }: { scope: ContentScope }) {
       ...(saved ?? {}),
     }
   })
+  const search = url.search
+  const filters = useMemo(
+    () => readContentFilters(search, savedFilters),
+    [search, savedFilters]
+  )
+  const setFilters = (
+    update: ContentFilters | ((current: ContentFilters) => ContentFilters)
+  ) => {
+    const next = typeof update === 'function' ? update(filters) : update
+    navigate(writeContentFilters(new URL(window.location.href), next), true)
+  }
   const [customRange, setCustomRange] = useState<DateRange | undefined>(() => {
     const from = parseLocalDate(filters.dateFrom)
     const to = parseLocalDate(filters.dateTo)
@@ -1551,17 +1605,20 @@ export function ContentWorkspace({ scope }: { scope: ContentScope }) {
     }
   }, [])
   const load = useCallback(
-    () =>
+    (active: () => boolean) =>
       api<{ items: FeedItem[] }>(
         filters.query.trim()
           ? `/api/contents?keyword=${encodeURIComponent(filters.query.trim())}`
           : '/api/contents'
       )
         .then((data) => {
+          if (!active()) return
           setItems(data.items)
           setError('')
         })
-        .catch((reason) => setError(String(reason))),
+        .catch((reason) => {
+          if (active()) setError(String(reason))
+        }),
     [filters.query]
   )
   const visible = useMemo(() => {
@@ -1580,39 +1637,38 @@ export function ContentWorkspace({ scope }: { scope: ContentScope }) {
     })
   }, [items, filters, scope])
   const index = visible.findIndex((item) => item.id === selected)
-  const selectedItem = visible[index]
-  function open(item: FeedItem, rememberScroll = true) {
-    if (rememberScroll) {
-      scrollPosition.current = scrollRef.current?.scrollTop ?? 0
-    }
-    setSelected(item.id)
-    if (!item.read) {
-      void post(`/api/contents/${encodeURIComponent(item.id)}/read`, {
-        read: true,
-      })
-      setItems((current) =>
-        current?.map((value) =>
-          value.id === item.id ? { ...value, read: true } : value
-        )
-      )
-    }
+  const selectedItem = selected
+    ? ((detail?.id === selected ? detail.item : undefined) ??
+      items?.find((item) => item.id === selected))
+    : undefined
+  const showingDetail = Boolean(selectedItem)
+  const listAddress = listHref(scope, url.search)
+  const scrollStorageKey = `qiushui-airadar:scroll:${listAddress}:${selected ? 'detail' : 'list'}`
+  const itemHref = (id: string) =>
+    contentHref(id, scope, writeContentFilters(url, filters).search)
+  function rememberPosition() {
+    const top = scrollRef.current?.scrollTop ?? scrollPosition.current
+    scrollPosition.current = top
+    sessionStorage.setItem(scrollStorageKey, String(top))
+  }
+  function open(item: FeedItem) {
+    navigate(itemHref(item.id))
   }
   function close() {
-    setSelected(undefined)
-    requestAnimationFrame(() =>
-      scrollRef.current?.scrollTo({ top: scrollPosition.current })
-    )
+    // Closing replaces the detail entry; browser Back remains available naturally.
+    navigate(listHref(scope, window.location.search), true)
   }
   function move(delta: number) {
     const next = visible[index + delta]
-    if (next) open(next, false)
+    if (index >= 0 && next) open(next)
   }
   function changed(item: FeedItem) {
+    setDetail({ id: item.id, item })
     setItems((current) =>
       current?.map((value) => (value.id === item.id ? item : value))
     )
     if (!filterContentScope([item], scope).length) {
-      setSelected(undefined)
+      close()
     }
   }
   async function toggleFavorite(item: FeedItem) {
@@ -1649,8 +1705,44 @@ export function ContentWorkspace({ scope }: { scope: ContentScope }) {
     setCustomRange({ from, to })
   }
   useEffect(() => {
-    void load()
+    let active = true
+    void load(() => active)
+    return () => {
+      active = false
+    }
   }, [load])
+  useEffect(() => {
+    if (!selected) return
+    let active = true
+    void api<{ item: FeedItem }>(
+      `/api/contents/${encodeURIComponent(selected)}`
+    )
+      .then(({ item }) => {
+        if (!active) return
+        const readItem = { ...item, read: true }
+        setDetail({ id: selected, item: readItem })
+        setItems((current) =>
+          current?.map((value) => (value.id === selected ? readItem : value))
+        )
+        if (!item.read)
+          void post(`/api/contents/${encodeURIComponent(selected)}/read`, {
+            read: true,
+          }).catch(() => {})
+      })
+      .catch((reason) => {
+        if (active) setDetail({ id: selected, error: String(reason) })
+      })
+    return () => {
+      active = false
+    }
+  }, [selected])
+  useEffect(() => {
+    if (new URLSearchParams(window.location.search).get('filters') !== '1')
+      navigate(
+        writeContentFilters(new URL(window.location.href), filters),
+        true
+      )
+  }, [filters])
   useEffect(() => {
     if (typeof localStorage !== 'undefined')
       localStorage.setItem(storageKey, JSON.stringify(filters))
@@ -1662,8 +1754,14 @@ export function ContentWorkspace({ scope }: { scope: ContentScope }) {
   }, [cardWidth, viewMode, viewStorageKey])
   useEffect(() => {
     const key = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
-        setSelected(undefined)
+      if (
+        (event.target as HTMLElement)?.closest(
+          'input, textarea, select, [contenteditable=true]'
+        )
+      )
+        return
+      if (event.key === 'Escape' && selected) {
+        navigate(listHref(scope, window.location.search), true)
         return
       }
       const delta =
@@ -1672,20 +1770,21 @@ export function ContentWorkspace({ scope }: { scope: ContentScope }) {
           : event.key === 'k' || event.key === 'ArrowUp'
             ? -1
             : 0
-      if (selected && delta) {
+      if (selected && index >= 0 && delta) {
         const next = visible[index + delta]
-        if (next) open(next)
+        if (next) navigate(contentHref(next.id, scope, window.location.search))
       }
     }
     addEventListener('keydown', key)
     return () => removeEventListener('keydown', key)
-  }, [index, selected, visible])
+  }, [index, selected, visible, scope])
   const renderCard = (item: FeedItem) => (
     <ContentCard
       key={item.id}
       item={item}
       selected={selected === item.id}
-      compact={Boolean(selectedItem)}
+      compact={showingDetail}
+      href={itemHref(item.id)}
       onOpen={() => open(item)}
       onFavorite={() => void toggleFavorite(item)}
     />
@@ -1712,9 +1811,7 @@ export function ContentWorkspace({ scope }: { scope: ContentScope }) {
       setMasonryColumns(
         Math.max(
           1,
-          Math.floor(
-            (availableWidth + gap) / (selectedCardWidth.pixels + gap)
-          )
+          Math.floor((availableWidth + gap) / (selectedCardWidth.pixels + gap))
         )
       )
     }
@@ -1722,7 +1819,12 @@ export function ContentWorkspace({ scope }: { scope: ContentScope }) {
     const observer = new ResizeObserver(updateColumns)
     observer.observe(container)
     return () => observer.disconnect()
-  }, [selectedCardWidth.pixels])
+  }, [selectedCardWidth.pixels, selected, mobile, showingDetail])
+  useLayoutEffect(() => {
+    const top = Number(sessionStorage.getItem(scrollStorageKey)) || 0
+    scrollPosition.current = top
+    scrollRef.current?.scrollTo({ top })
+  }, [selected, items, viewMode, scrollStorageKey, mobile, masonryColumns])
   const renderMasonry = (group: FeedItem[]) => (
     <div data-view='masonry' className='w-full'>
       <Masonry columnsCount={masonryColumns} gutter='12px' sequential>
@@ -1766,7 +1868,15 @@ export function ContentWorkspace({ scope }: { scope: ContentScope }) {
             >
               <TableCell className='max-w-80 whitespace-normal'>
                 <div className='line-clamp-1 font-medium'>
-                  {listTitle(item)}
+                  <a
+                    href={itemHref(item.id)}
+                    onClick={(event) => {
+                      event.stopPropagation()
+                      followLink(event, () => open(item))
+                    }}
+                  >
+                    {listTitle(item)}
+                  </a>
                 </div>
                 <div className='line-clamp-1 text-xs text-muted-foreground'>
                   {item.junk.isJunk && item.junk.note
@@ -2133,6 +2243,7 @@ export function ContentWorkspace({ scope }: { scope: ContentScope }) {
       <div
         ref={scrollRef}
         data-slot='content-list-scroll'
+        onScroll={rememberPosition}
         className='min-h-0 flex-1 overflow-y-auto overscroll-contain p-4 pb-20 lg:pb-4'
       >
         {error ? (
@@ -2153,6 +2264,24 @@ export function ContentWorkspace({ scope }: { scope: ContentScope }) {
       </div>
     </div>
   )
+  if (selected && !selectedItem) {
+    const message = detail?.id === selected ? detail.error : undefined
+    return (
+      <div className='flex h-full min-h-0 flex-col'>
+        <PageHeader title={title}>
+          <Button variant='outline' onClick={close}>
+            返回列表
+          </Button>
+        </PageHeader>
+        <p
+          role={message ? 'alert' : 'status'}
+          className='p-4 text-sm text-muted-foreground'
+        >
+          {message ? `内容不存在或读取失败：${message}` : '正在读取内容详情…'}
+        </p>
+      </div>
+    )
+  }
   if (mobile && selectedItem)
     return (
       <div className='fixed inset-0 z-50'>

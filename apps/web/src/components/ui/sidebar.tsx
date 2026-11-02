@@ -1,4 +1,5 @@
 import * as React from 'react'
+import { Slot } from '@radix-ui/react-slot'
 import { PanelLeftClose, PanelLeftOpen } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import {
@@ -184,15 +185,17 @@ function SidebarMenuItem({ className, ...props }: React.ComponentProps<'li'>) {
 }
 
 function SidebarMenuButton({
+  asChild = false,
   isActive = false,
   tooltip,
   className,
   children,
   ...props
-}: React.ComponentProps<'button'> & { isActive?: boolean; tooltip?: string }) {
+}: React.ComponentProps<'button'> & { asChild?: boolean; isActive?: boolean; tooltip?: string }) {
   const context = React.useContext(SidebarContext)
+  const Component = asChild ? Slot : 'button'
   const button = (
-    <button
+    <Component
       data-slot='sidebar-menu-button'
       data-active={isActive}
       className={cn(
@@ -202,7 +205,7 @@ function SidebarMenuButton({
       {...props}
     >
       {children}
-    </button>
+    </Component>
   )
 
   if (!tooltip || context?.state !== 'collapsed') return button

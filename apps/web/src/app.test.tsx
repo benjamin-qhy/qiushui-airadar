@@ -1,5 +1,5 @@
 import { renderToStaticMarkup } from 'react-dom/server'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { App, ContentCard, type FeedItem } from './app.js'
 import { Detail } from './features/content-workspace.js'
 import { CollectionProvidersPanel } from './features/collection-providers-panel.js'
@@ -26,6 +26,31 @@ const item: FeedItem = {
 }
 
 describe('complete web shell', () => {
+  it.each([
+    ['favorites', '我的收藏'],
+    ['junk', '垃圾内容'],
+    ['all', '全部内容'],
+    ['sources', '信源管理'],
+    ['collection-settings', '采集设置'],
+    ['runtime', '运行状态'],
+    ['runtime-log', '运行日志'],
+    ['config', '系统配置'],
+    ['models', '模型管理'],
+    ['exceptions', '异常数据'],
+  ])('opens the requested %s page after a full reload', (page, title) => {
+    vi.stubGlobal('window', {
+      location: { search: `?page=${page}` },
+    })
+    try {
+      const heading = renderToStaticMarkup(<App />).match(
+        /<h1[^>]*>(.*?)<\/h1>/
+      )?.[1]
+      expect(heading).toBe(title)
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+
   it('shows an honest combined total for collection runs recorded before the upgrade', () => {
     const html = renderToStaticMarkup(
       <CollectionStatus

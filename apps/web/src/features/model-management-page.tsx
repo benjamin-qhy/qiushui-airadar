@@ -7,6 +7,9 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { api, post, put, remove } from '@/lib/api'
+import { useUrlChoice } from '@/lib/use-url-choice'
+
+const modelTabs = ['providers', 'models'] as const
 
 type ModelStage = 'classify' | 'score' | 'translate'
 
@@ -84,6 +87,7 @@ function parseModelChoice(value: string) {
 }
 
 export function ModelManagementPage() {
+  const [tab, setTab] = useUrlChoice('models-tab', modelTabs, 'providers')
   const [providers, setProviders] = useState<ModelProviderItem[]>([])
   const [selectedProviderId, setSelectedProviderId] = useState('openai-codex')
   const [search, setSearch] = useState('')
@@ -272,7 +276,7 @@ export function ModelManagementPage() {
               {message}
             </p>
           )}
-          <Tabs defaultValue='providers'>
+          <Tabs value={tab} onValueChange={setTab}>
             <TabsList>
               <TabsTrigger value='providers'>提供商管理</TabsTrigger>
               <TabsTrigger value='models'>模型配置</TabsTrigger>

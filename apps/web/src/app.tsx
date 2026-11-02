@@ -1,4 +1,5 @@
-import { useState } from 'react'
+import { useEffect } from 'react'
+import { navigate, pageHref, readRoute, useBrowserUrl } from '@/lib/navigation'
 import { AppShell } from '@/components/app-shell'
 import { ConfigPage } from '@/features/config-page'
 import { CollectionSettingsPage } from '@/features/collection-settings-page'
@@ -13,27 +14,31 @@ export { ContentCard } from '@/features/content-workspace'
 export type { FeedItem } from '@/types'
 
 export function App() {
-  const initialPage =
-    typeof window === 'undefined'
-      ? null
-      : new URLSearchParams(window.location.search).get('page')
-  const [page, setPage] = useState<PageKey>(
-    initialPage === 'models' || initialPage === 'exceptions'
-      ? initialPage
-      : 'daily'
-  )
+  const url = useBrowserUrl()
+  const { page } = readRoute(url)
+  useEffect(() => {
+    const current = new URL(window.location.href)
+    if (current.pathname === '/') {
+      current.pathname = pageHref(readRoute(current).page)
+      current.searchParams.delete('page')
+      navigate(current, true)
+    }
+  }, [])
+  const setPage = (next: PageKey) => {
+    if (next !== page || readRoute(url).contentId) navigate(pageHref(next))
+  }
   return (
     <AppShell page={page} onPage={setPage}>
       {page === 'daily' ? (
-        <ContentWorkspace scope='daily' />
+        <ContentWorkspace key='daily' scope='daily' />
       ) : page === 'all' ? (
-        <ContentWorkspace scope='all' />
+        <ContentWorkspace key='all' scope='all' />
       ) : page === 'exceptions' ? (
-        <ContentWorkspace scope='exceptions' />
+        <ContentWorkspace key='exceptions' scope='exceptions' />
       ) : page === 'favorites' ? (
-        <ContentWorkspace scope='favorites' />
+        <ContentWorkspace key='favorites' scope='favorites' />
       ) : page === 'junk' ? (
-        <ContentWorkspace scope='junk' />
+        <ContentWorkspace key='junk' scope='junk' />
       ) : page === 'sources' ? (
         <SourcesPage />
       ) : page === 'collection-settings' ? (

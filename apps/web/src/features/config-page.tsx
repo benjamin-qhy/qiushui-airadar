@@ -16,7 +16,10 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Switch } from '@/components/ui/switch'
 import { Textarea } from '@/components/ui/textarea'
 import { api, post, put } from '@/lib/api'
+import { useUrlChoice } from '@/lib/use-url-choice'
 import type { SourceItem } from '@/types'
+
+const configTabs = ['parameters', 'versions', 'rules'] as const
 
 interface ConfigData {
   own: Record<string, unknown>
@@ -36,6 +39,7 @@ interface FileConfigData {
 }
 
 export function ConfigPage() {
+  const [tab, setTab] = useUrlChoice('config-tab', configTabs, 'parameters')
   const [data, setData] = useState<ConfigData>()
   const [fileData, setFileData] = useState<FileConfigData>()
   const [fileDrafts, setFileDrafts] = useState<Record<string, string>>({})
@@ -226,7 +230,7 @@ export function ConfigPage() {
               {message}
             </p>
           )}
-          <Tabs defaultValue='parameters'>
+          <Tabs value={tab} onValueChange={setTab}>
             <TabsList>
               <TabsTrigger value='parameters'>参数配置</TabsTrigger>
               <TabsTrigger value='versions'>版本与回退</TabsTrigger>

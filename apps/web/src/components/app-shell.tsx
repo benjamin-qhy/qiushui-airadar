@@ -1,3 +1,4 @@
+import { followLink, pageHref } from '@/lib/navigation'
 import type { ReactNode } from 'react'
 import {
   BookOpen,
@@ -102,10 +103,17 @@ export function AppShell({
                         aria-current={page === id ? 'page' : undefined}
                         isActive={page === id}
                         tooltip={label}
-                        onClick={() => onPage(id)}
+                        asChild
                       >
-                        <Icon />
-                        <span>{label}</span>
+                        <a
+                          href={pageHref(id)}
+                          onClick={(event) =>
+                            followLink(event, () => onPage(id))
+                          }
+                        >
+                          <Icon />
+                          <span>{label}</span>
+                        </a>
                       </SidebarMenuButton>
                     </SidebarMenuItem>
                   ))}
@@ -125,15 +133,16 @@ export function AppShell({
         </main>
         <nav className='fixed inset-x-0 bottom-0 z-40 grid w-screen max-w-full grid-cols-10 border-t bg-background/95 px-1 py-1 backdrop-blur lg:hidden'>
           {navigation.map(({ id, label, icon: Icon }) => (
-            <button
+            <a
               key={id}
               aria-current={page === id ? 'page' : undefined}
               className={`min-w-0 flex flex-col items-center gap-1 rounded-md py-2 text-[10px] ${page === id ? 'bg-foreground/[0.06] text-foreground' : 'text-muted-foreground'}`}
-              onClick={() => onPage(id)}
+              href={pageHref(id)}
+              onClick={(event) => followLink(event, () => onPage(id))}
             >
               <Icon className='size-4' />
               <span className='w-full truncate px-0.5'>{label}</span>
-            </button>
+            </a>
           ))}
         </nav>
       </SidebarInset>
