@@ -919,6 +919,21 @@ export function createSingleTableServiceApp(options: {
               ),
             })
           }
+          const contentDetail = /^\/api\/contents\/([^/]+)$/u.exec(url.pathname)
+          if (method === 'GET' && contentDetail) {
+            const row = activeRepository.getById(
+              decodeURIComponent(contentDetail[1]!)
+            )
+            if (!row) return send(response, 404, { error: 'content_not_found' })
+            const config = await loadSingleTableConfig(options.configRoot)
+            return send(response, 200, {
+              item: await feedItem(
+                activeRepository,
+                row,
+                config.sources.sources
+              ),
+            })
+          }
           if (method === 'GET' && url.pathname === '/api/sources') {
             const config = await loadSingleTableConfig(options.configRoot)
             const state = await loadSourceState(options.configRoot)
@@ -2238,7 +2253,11 @@ export function createSingleTableServiceApp(options: {
             )
               return send(response, 403, { error: 'forbidden' })
             const extension = path.extname(requested)
-            const file = extension ? requested : path.join(root, 'index.html')
+            const contentPage = /^\/content\/[^/]+\/?$/u.test(url.pathname)
+            const file =
+              extension && !contentPage
+                ? requested
+                : path.join(root, 'index.html')
             try {
               const body = await readFile(file)
               const types: Record<string, string> = {

@@ -1305,6 +1305,15 @@ async function handleRequest(
           : items,
     })
   }
+  const contentDetail = /^\/api\/contents\/([^/]+)$/u.exec(url.pathname)
+  if (method === 'GET' && contentDetail) {
+    const item = contentItems(repository).find(
+      (item) => item.id === decodeURIComponent(contentDetail[1]!)
+    )
+    return item
+      ? send(response, 200, { item })
+      : send(response, 404, { error: 'content_not_found' })
+  }
   if (method === 'GET' && url.pathname === '/api/sources') {
     const audits = repository.listAudits()
     return send(response, 200, {
@@ -1575,7 +1584,9 @@ async function handleRequest(
     !url.pathname.startsWith('/api/')
   ) {
     const requestedPath = decodeURIComponent(url.pathname)
-    const hasExtension = path.posix.basename(requestedPath).includes('.')
+    const hasExtension =
+      path.posix.basename(requestedPath).includes('.') &&
+      !/^\/content\/[^/]+\/?$/u.test(url.pathname)
     const relativePath = hasExtension
       ? requestedPath.replace(/^\/+/, '')
       : 'index.html'
