@@ -2387,8 +2387,15 @@ export function createSingleTableServiceApp(options: {
                   }
                 )
               })()
-                .catch((error) => {
-                  console.error('video transcript translation failed', error)
+                .catch(async (error) => {
+                  await activeRepository.appendLog(id, {
+                    action: 'video-transcript-translate',
+                    stage: 'translating',
+                    status: 'failed',
+                    trigger: 'manual-action',
+                    error:
+                      error instanceof Error ? error.message : String(error),
+                  })
                 })
                 .finally(() => {
                   translatingTranscript.delete(id)

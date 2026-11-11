@@ -11,7 +11,6 @@ import {
 import {
   createTikHubXProvider,
   createTikHubYouTubeProvider,
-  createTikHubYouTubeTranscriptProvider,
   createTwitterApiIoProvider,
   createYouTubeDataApiProvider,
   fetchTwitterApiIoArticle,
@@ -482,7 +481,7 @@ export function createSingleTableSourceProvider(
       }
     },
     async resolve(source: ConfiguredSource, item: DiscoveredContent) {
-      let language = source.language
+      const language = source.language
       const calls: Array<{ request: unknown; response: unknown }> = []
       const trackedFetch = auditFetch(
         fetcher,
