@@ -1,0 +1,309 @@
+{
+  "translationChecks": [
+    {
+      "id": "7c974792-e8c7-4f1b-8857-8c62ddcfee43",
+      "title": "我如何使用 Claude 编辑视频",
+      "summaryShown": true,
+      "translationShown": true,
+      "characters": 1540
+    },
+    {
+      "id": "8355e193-c3d3-47da-84c0-6d3b0f4c58f2",
+      "title": "Salesforce 如何使用 Claude Code",
+      "summaryShown": true,
+      "translationShown": true,
+      "characters": 6040
+    },
+    {
+      "id": "041fa199-35f0-4b62-bb6b-aee646ef72b8",
+      "title": "在 Claude 中协作处理工件",
+      "summaryShown": true,
+      "translationShown": true,
+      "characters": 905
+    },
+    {
+      "id": "afe122fd-667f-4468-ad80-a527101fae90",
+      "title": "我真的希望开放模型能够胜出，但它们现在还不够好",
+      "summaryShown": true,
+      "translationShown": true,
+      "characters": 7791
+    },
+    {
+      "id": "734bfc5c-5cd8-403c-b094-bdad07488371",
+      "title": "我的 AI 软件工厂每周交付数百个 PR（我是这样管理的）",
+      "summaryShown": true,
+      "translationShown": true,
+      "characters": 6490
+    },
+    {
+      "id": "0f5fc962-d440-4eb6-9676-be9a3acf7a3a",
+      "title": "上下文感知编程：为 AI 智能体提供正确的上下文",
+      "summaryShown": true,
+      "translationShown": true,
+      "characters": 1983
+    },
+    {
+      "id": "295f1773-e6eb-4afd-80ed-af1e61727552",
+      "title": "LifeVal：衡量 AI 在日常生活重要任务上的进展",
+      "summaryShown": true,
+      "translationShown": true,
+      "characters": 533
+    },
+    {
+      "id": "f1b49b5b-2a3e-4da6-9666-1a48adffc1c5",
+      "title": "推出 ChatGPT Images 2.6",
+      "summaryShown": true,
+      "translationShown": true,
+      "characters": 228
+    },
+    {
+      "id": "8d63a677-0575-4019-87c8-0760fdf1c619",
+      "title": "GPT-Image-2.6：借助 Flare 和 Sunburst 加快图像生成",
+      "summaryShown": true,
+      "translationShown": true,
+      "characters": 585
+    },
+    {
+      "id": "d846a0b1-876f-4724-a0a5-0b13f37a63e2",
+      "title": "使用 Astra 设计硬件",
+      "summaryShown": true,
+      "translationShown": true,
+      "characters": 580
+    },
+    {
+      "id": "feee0047-f81a-4059-b794-57dcde5911f1",
+      "title": "ChatGPT 语音现已进入 Finances",
+      "summaryShown": true,
+      "translationShown": true,
+      "characters": 183
+    }
+  ],
+  "summaryChecks": [
+    {
+      "id": "8b2910e0-0eff-4315-9e99-88a3f4636788",
+      "headings": 22,
+      "characters": 2831,
+      "visible": true
+    },
+    {
+      "id": "7c974792-e8c7-4f1b-8857-8c62ddcfee43",
+      "headings": 9,
+      "characters": 1376,
+      "visible": true
+    },
+    {
+      "id": "53c3423e-b369-48f8-9aaa-2728624524a8",
+      "headings": 11,
+      "characters": 1286,
+      "visible": true
+    },
+    {
+      "id": "bfb18909-950b-4606-8f32-c21e236d7bcf",
+      "headings": 28,
+      "characters": 5535,
+      "visible": true
+    },
+    {
+      "id": "804667b3-6463-41ac-9b90-a646e36b230c",
+      "headings": 20,
+      "characters": 4820,
+      "visible": true
+    },
+    {
+      "id": "8355e193-c3d3-47da-84c0-6d3b0f4c58f2",
+      "headings": 13,
+      "characters": 3525,
+      "visible": true
+    },
+    {
+      "id": "041fa199-35f0-4b62-bb6b-aee646ef72b8",
+      "headings": 9,
+      "characters": 1043,
+      "visible": true
+    },
+    {
+      "id": "afe122fd-667f-4468-ad80-a527101fae90",
+      "headings": 21,
+      "characters": 3446,
+      "visible": true
+    },
+    {
+      "id": "734bfc5c-5cd8-403c-b094-bdad07488371",
+      "headings": 30,
+      "characters": 4056,
+      "visible": true
+    },
+    {
+      "id": "65dff8fb-e30b-42ea-b218-47fec97fb965",
+      "headings": 13,
+      "characters": 3309,
+      "visible": true
+    },
+    {
+      "id": "df441aac-6140-4d2d-9ff8-c70352ca36b9",
+      "headings": 27,
+      "characters": 4776,
+      "visible": true
+    },
+    {
+      "id": "43c9519c-9578-4be9-8c76-07e02bc9881b",
+      "headings": 9,
+      "characters": 2116,
+      "visible": true
+    },
+    {
+      "id": "1d093446-f04c-44bd-90d7-3db7c4862fc9",
+      "headings": 27,
+      "characters": 4612,
+      "visible": true
+    },
+    {
+      "id": "70ffc12d-ea52-4c6e-9acc-d3e088fec6f1",
+      "headings": 14,
+      "characters": 2068,
+      "visible": true
+    },
+    {
+      "id": "881809a7-2226-4107-9d78-cca8ac89b75e",
+      "headings": 11,
+      "characters": 2139,
+      "visible": true
+    },
+    {
+      "id": "0f5fc962-d440-4eb6-9676-be9a3acf7a3a",
+      "headings": 20,
+      "characters": 1678,
+      "visible": true
+    },
+    {
+      "id": "f47cf5e9-22c4-4a02-b997-abf586d8ead4",
+      "headings": 10,
+      "characters": 4302,
+      "visible": true
+    },
+    {
+      "id": "95c5cc22-5b1f-4605-ab87-bbfc587214e4",
+      "headings": 15,
+      "characters": 2697,
+      "visible": true
+    },
+    {
+      "id": "ec053ec8-c235-42e7-b539-84d6697a292f",
+      "headings": 16,
+      "characters": 5030,
+      "visible": true
+    },
+    {
+      "id": "a039efdc-230b-4d2b-91f6-85829c337e39",
+      "headings": 19,
+      "characters": 4735,
+      "visible": true
+    },
+    {
+      "id": "295f1773-e6eb-4afd-80ed-af1e61727552",
+      "headings": 7,
+      "characters": 659,
+      "visible": true
+    },
+    {
+      "id": "761bfb7a-e130-421c-b2b9-ecc69a0c83fd",
+      "headings": 9,
+      "characters": 719,
+      "visible": true
+    },
+    {
+      "id": "f1b49b5b-2a3e-4da6-9666-1a48adffc1c5",
+      "headings": 5,
+      "characters": 298,
+      "visible": true
+    },
+    {
+      "id": "8d63a677-0575-4019-87c8-0760fdf1c619",
+      "headings": 9,
+      "characters": 870,
+      "visible": true
+    },
+    {
+      "id": "43ef9594-e89e-4b6a-a591-c17053c1ec56",
+      "headings": 8,
+      "characters": 658,
+      "visible": true
+    },
+    {
+      "id": "d846a0b1-876f-4724-a0a5-0b13f37a63e2",
+      "headings": 10,
+      "characters": 1065,
+      "visible": true
+    },
+    {
+      "id": "f6b65022-8899-4955-a71e-f077996dc609",
+      "headings": 8,
+      "characters": 777,
+      "visible": true
+    },
+    {
+      "id": "feee0047-f81a-4059-b794-57dcde5911f1",
+      "headings": 7,
+      "characters": 443,
+      "visible": true
+    },
+    {
+      "id": "f2039b98-245e-41b0-8175-4ba096e6384b",
+      "headings": 9,
+      "characters": 624,
+      "visible": true
+    },
+    {
+      "id": "6be8e21c-6dc3-41e5-9ea5-a37168432bad",
+      "headings": 6,
+      "characters": 712,
+      "visible": true
+    },
+    {
+      "id": "983d71d2-9036-47f5-ae50-9f13c6c772ea",
+      "headings": 38,
+      "characters": 4606,
+      "visible": true
+    },
+    {
+      "id": "db3d92a5-125e-4bfd-831e-a32567ab26a2",
+      "headings": 9,
+      "characters": 1583,
+      "visible": true
+    },
+    {
+      "id": "8ea110bf-a7b7-433b-8c2b-4bd4d631bda0",
+      "headings": 36,
+      "characters": 5885,
+      "visible": true
+    },
+    {
+      "id": "0f8cc6ad-473f-406e-8bb3-a8722290a1d6",
+      "headings": 13,
+      "characters": 5468,
+      "visible": true
+    },
+    {
+      "id": "f458ef77-bf1c-4bb2-8b8a-528cb371feeb",
+      "headings": 10,
+      "characters": 3772,
+      "visible": true
+    },
+    {
+      "id": "8efdfd1e-223e-4203-b256-d6c6323ed2b0",
+      "headings": 16,
+      "characters": 2838,
+      "visible": true
+    },
+    {
+      "id": "0bc69f8f-d06a-4796-a4e3-70e1b7795f91",
+      "headings": 23,
+      "characters": 2869,
+      "visible": true
+    }
+  ],
+  "lowScoreMessage": "内容评分未达到自动翻译条件。\n\n生成中文意译",
+  "refreshPassed": true,
+  "mobilePassed": true,
+  "pageErrors": []
+}

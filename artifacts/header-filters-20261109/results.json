@@ -1,0 +1,401 @@
+{
+  "checkedAt": "2026-11-09T00:26:53.084Z",
+  "rows": 7875,
+  "eligible": 4416,
+  "checks": [
+    {
+      "label": "全部",
+      "count": 4416,
+      "pass": true
+    },
+    {
+      "label": "视频",
+      "count": 61,
+      "pass": true
+    },
+    {
+      "label": "语音",
+      "count": 0,
+      "pass": true
+    },
+    {
+      "label": "图文",
+      "count": 0,
+      "pass": true
+    },
+    {
+      "label": "文章",
+      "count": 961,
+      "pass": true
+    },
+    {
+      "label": "短帖",
+      "count": 3394,
+      "pass": true
+    },
+    {
+      "label": "全部类型",
+      "count": 4416,
+      "pass": true
+    },
+    {
+      "label": "X",
+      "count": 4353,
+      "pass": true
+    },
+    {
+      "label": "YouTube",
+      "count": 0,
+      "pass": true
+    },
+    {
+      "label": "RSS",
+      "count": 63,
+      "pass": true
+    },
+    {
+      "label": "抖音",
+      "count": 0,
+      "pass": true
+    },
+    {
+      "label": "视频号",
+      "count": 0,
+      "pass": true
+    },
+    {
+      "label": "小红书",
+      "count": 0,
+      "pass": true
+    },
+    {
+      "label": "全部平台",
+      "count": 4416,
+      "pass": true
+    },
+    {
+      "label": "标签:模型发布",
+      "count": 121,
+      "pass": true
+    },
+    {
+      "label": "标签:产品更新",
+      "count": 538,
+      "pass": true
+    },
+    {
+      "label": "标签:开源/仓库",
+      "count": 143,
+      "pass": true
+    },
+    {
+      "label": "标签:论文/研究",
+      "count": 187,
+      "pass": true
+    },
+    {
+      "label": "标签:教程/实践",
+      "count": 469,
+      "pass": true
+    },
+    {
+      "label": "标签:大佬观点",
+      "count": 911,
+      "pass": true
+    },
+    {
+      "label": "标签:评测/基准",
+      "count": 220,
+      "pass": true
+    },
+    {
+      "label": "标签:安全/对齐",
+      "count": 212,
+      "pass": true
+    },
+    {
+      "label": "标签:现象/趋势",
+      "count": 674,
+      "pass": true
+    },
+    {
+      "label": "标签:行业动态",
+      "count": 528,
+      "pass": true
+    },
+    {
+      "label": "标签:政策/监管",
+      "count": 68,
+      "pass": true
+    },
+    {
+      "label": "标签:非AI/通用工具",
+      "count": 19,
+      "pass": true
+    },
+    {
+      "label": "标签:其他",
+      "count": 326,
+      "pass": true
+    },
+    {
+      "label": "标签:Agent",
+      "count": 958,
+      "pass": true
+    },
+    {
+      "label": "标签:编码",
+      "count": 373,
+      "pass": true
+    },
+    {
+      "label": "标签:推理",
+      "count": 452,
+      "pass": true
+    },
+    {
+      "label": "标签:多模态",
+      "count": 120,
+      "pass": true
+    },
+    {
+      "label": "标签:语音",
+      "count": 70,
+      "pass": true
+    },
+    {
+      "label": "标签:视频",
+      "count": 61,
+      "pass": true
+    },
+    {
+      "label": "标签:图像生成",
+      "count": 29,
+      "pass": true
+    },
+    {
+      "label": "标签:RAG",
+      "count": 54,
+      "pass": true
+    },
+    {
+      "label": "标签:端侧",
+      "count": 61,
+      "pass": true
+    },
+    {
+      "label": "标签:数据/训练",
+      "count": 146,
+      "pass": true
+    },
+    {
+      "label": "标签:搜索",
+      "count": 42,
+      "pass": true
+    },
+    {
+      "label": "标签:部署/工程",
+      "count": 563,
+      "pass": true
+    },
+    {
+      "label": "标签:开源生态",
+      "count": 250,
+      "pass": true
+    },
+    {
+      "label": "标签:具身智能",
+      "count": 122,
+      "pass": true
+    },
+    {
+      "label": "标签:MCP/工具调用",
+      "count": 178,
+      "pass": true
+    },
+    {
+      "label": "标签:AI 落地",
+      "count": 423,
+      "pass": true
+    },
+    {
+      "label": "标签:产品增长",
+      "count": 125,
+      "pass": true
+    },
+    {
+      "label": "标签:自媒体运营",
+      "count": 142,
+      "pass": true
+    },
+    {
+      "label": "恢复全部标签",
+      "count": 4416,
+      "pass": true
+    },
+    {
+      "label": "最近一天",
+      "count": 357,
+      "pass": true
+    },
+    {
+      "label": "最近三天",
+      "count": 1129,
+      "pass": true
+    },
+    {
+      "label": "近一周",
+      "count": 2627,
+      "pass": true
+    },
+    {
+      "label": "近一个月",
+      "count": 4416,
+      "pass": true
+    },
+    {
+      "label": "近三个月",
+      "count": 4416,
+      "pass": true
+    },
+    {
+      "label": "近半年",
+      "count": 4416,
+      "pass": true
+    },
+    {
+      "label": "关注度最高",
+      "pass": true,
+      "rows": 100
+    },
+    {
+      "label": "最早发布",
+      "pass": true,
+      "rows": 100
+    },
+    {
+      "label": "最新发布",
+      "pass": true,
+      "rows": 100
+    },
+    {
+      "label": "未处理",
+      "count": 0,
+      "pass": true
+    },
+    {
+      "label": "处理中",
+      "count": 0,
+      "pass": true
+    },
+    {
+      "label": "已完成",
+      "count": 4416,
+      "pass": true
+    },
+    {
+      "label": "失败",
+      "count": 0,
+      "pass": true
+    },
+    {
+      "label": "待人工转写",
+      "count": 0,
+      "pass": true
+    },
+    {
+      "label": "原文不可用",
+      "count": 0,
+      "pass": true
+    },
+    {
+      "label": "全部状态",
+      "count": 4416,
+      "pass": true
+    },
+    {
+      "label": "已读",
+      "count": 53,
+      "pass": true
+    },
+    {
+      "label": "未读",
+      "count": 4363,
+      "pass": true
+    },
+    {
+      "label": "全部阅读",
+      "count": 4416,
+      "pass": true
+    },
+    {
+      "label": "关键词OpenAI",
+      "count": 341,
+      "pass": true
+    },
+    {
+      "label": "搜索+平台+类型+标签",
+      "count": 24,
+      "pass": true
+    },
+    {
+      "label": "无匹配搜索",
+      "count": 0,
+      "pass": true
+    },
+    {
+      "label": "清空恢复",
+      "count": 4416,
+      "pass": true
+    },
+    {
+      "label": "自定义11月7日至9日",
+      "count": 1129,
+      "pass": true
+    },
+    {
+      "label": "刷新保留自定义日期",
+      "count": 1129,
+      "pass": true
+    },
+    {
+      "label": "恢复不限日期",
+      "count": 4416,
+      "pass": true
+    },
+    {
+      "label": "加载更多",
+      "rows": 200,
+      "pass": true
+    },
+    {
+      "label": "旧核心链接兼容",
+      "pass": true
+    },
+    {
+      "label": "最新版最近三天",
+      "count": 1129,
+      "pass": true
+    },
+    {
+      "label": "手机最近一天",
+      "count": 357,
+      "pass": true
+    },
+    {
+      "label": "手机已读+最近一天",
+      "count": 0,
+      "pass": true
+    },
+    {
+      "label": "手机失败状态（全部内容内无失败）",
+      "count": 0,
+      "pass": true
+    },
+    {
+      "label": "最终恢复全部",
+      "count": 4416,
+      "pass": true
+    }
+  ]
+}
