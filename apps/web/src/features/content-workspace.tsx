@@ -294,7 +294,10 @@ function Metric({
 }) {
   if (value === null || value === undefined || value <= 0) return null
   return (
-    <span className='inline-flex items-center gap-1' title={label}>
+    <span
+      className='inline-flex shrink-0 items-center gap-1 whitespace-nowrap tabular-nums'
+      title={label}
+    >
       <Icon className='size-3.5' aria-hidden='true' />
       <span>{formatCount(value)}</span>
       <span className='sr-only'>{label}</span>
@@ -714,7 +717,7 @@ export function ContentCard({
           ))}
         </div>
       )}
-      <div className='mt-auto flex shrink-0 flex-wrap items-center gap-2.5 pt-4 text-xs lg:text-[11px] text-muted-foreground'>
+      <div className='mt-auto flex shrink-0 flex-wrap items-center gap-x-3 gap-y-1.5 pt-4 text-xs lg:text-[11px] text-muted-foreground'>
         <ContentDate item={item} />
         {!compact && (
           <>
@@ -2328,7 +2331,9 @@ export function ContentWorkspace({ scope }: { scope: ContentScope }) {
         sequential
       >
         {group.map((item) => (
-          <div key={item.id}>{renderCard(item)}</div>
+          <div key={item.id} className='min-w-0'>
+            {renderCard(item)}
+          </div>
         ))}
       </Masonry>
     </div>
