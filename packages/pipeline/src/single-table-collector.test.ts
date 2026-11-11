@@ -206,7 +206,7 @@ it('runs sources and items serially with exactly one list call per source', asyn
         return {
           text:
             input.stage === 'classify'
-              ? '---\nkeywords: ["广告"]\nspam:\n  isJunk: true\n  reason: "纯广告"\n---'
+              ? '---\ncategory: null\nthemes: []\nkeywords: ["广告"]\nspam:\n  isJunk: true\n  reason: "纯广告"\n---'
               : '',
           provider: 'mock',
           model: 'mock',

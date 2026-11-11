@@ -7,6 +7,35 @@ import {
 } from './single-table-flow.js'
 
 describe('pi catalog upgrades', () => {
+  it('registers the LAN Ollama model as a keyless Pi provider', async () => {
+    const models = createApplicationModels({
+      ollama: {
+        baseUrl: 'http://192.168.3.103:11434',
+        modelId: 'gemma4:12b-mlx',
+        modelName: 'Gemma 4 12B MLX',
+      },
+    })
+    const provider = models.getProvider('ollama')
+    const model = models.getModel('ollama', 'gemma4:12b-mlx')
+
+    expect(provider).toMatchObject({
+      id: 'ollama',
+      name: 'Ollama',
+      baseUrl: 'http://192.168.3.103:11434/v1',
+    })
+    expect(provider?.stream).toBeTypeOf('function')
+    expect(model).toMatchObject({
+      id: 'gemma4:12b-mlx',
+      api: 'openai-completions',
+      provider: 'ollama',
+      baseUrl: 'http://192.168.3.103:11434/v1',
+    })
+    await expect(models.checkAuth('ollama')).resolves.toMatchObject({
+      type: 'api_key',
+      source: 'Ollama 局域网服务',
+    })
+  })
+
   it('keeps the installed DeepSeek default usable without changing its model ID', () => {
     const models = createApplicationModels()
     const model = models.getModel('deepseek', 'deepseek-v4-flash')

@@ -180,6 +180,16 @@ async function executeCollection(
       throw error
     })
   }
+  async function ollamaProviderConfig() {
+    const [baseUrl, modelId, modelName] = await Promise.all([
+      secret('OLLAMA_BASE_URL'),
+      secret('OLLAMA_MODEL_ID'),
+      secret('OLLAMA_MODEL_NAME'),
+    ])
+    return baseUrl && modelId && modelName
+      ? { baseUrl, modelId, modelName }
+      : undefined
+  }
   const [tikHubToken, twitterApiKey, youtubeApiKey] = await Promise.all([
     secret('TIKHUB_API_KEY'),
     secret('TWITTERAPI_IO_KEY'),
@@ -192,11 +202,13 @@ async function executeCollection(
     createSingleTableModelGateway(
       credentialStore,
       config.analysis.model.provider,
-      config.analysis.model
+      config.analysis.model,
+      await ollamaProviderConfig()
     )
   let consecutiveModelFailures = 0
   const gateway: typeof baseGateway = options.control
     ? {
+        supportsImages: baseGateway.supportsImages?.bind(baseGateway),
         getCapacity: baseGateway.getCapacity?.bind(baseGateway),
         async complete(input) {
           for (let attempt = 0; ; attempt++) {
@@ -223,7 +235,19 @@ async function executeCollection(
                   ? '额度不足'
                   : /\b403\b|permission|forbidden/iu.test(message)
                     ? '权限不足'
-                    : '超时或网络错误'
+                    : /rate.limit|\b429\b/iu.test(message)
+                      ? '模型服务限流'
+                      : /json|escaped character|unexpected token|schema|invalid.option/iu.test(
+                            message
+                          )
+                        ? '模型返回格式错误'
+                        : /timeout|timed.out|超时/iu.test(message)
+                          ? '模型请求超时'
+                          : /network|connection|fetch failed|ECONN|ENOTFOUND/iu.test(
+                                message
+                              )
+                            ? '模型网络连接失败'
+                            : '模型服务异常'
               const stageName = {
                 classify: '内容判定与摘要',
                 score: '价值评分',
@@ -238,7 +262,8 @@ async function executeCollection(
                 baseGateway = createSingleTableModelGateway(
                   credentialStore,
                   latest.analysis.model.provider,
-                  latest.analysis.model
+                  latest.analysis.model,
+                  await ollamaProviderConfig()
                 )
               }
               consecutiveModelFailures = 0

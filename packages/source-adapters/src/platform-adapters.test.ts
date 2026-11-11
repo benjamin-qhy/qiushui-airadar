@@ -1052,7 +1052,7 @@ it('recognizes confirmed application destinations without excluding actual artic
 
 it('separates deliberate exclusions from retriable errors and recognizes audio without confusing Hugging Face Spaces', async () => {
   const { classifyUnprocessedContent: classify } = await import('./index.js')
-  expect(classify({ platform: 'youtube', kind: 'video' })).toBe('视频内容')
+  expect(classify({ platform: 'youtube', kind: 'video' })).toBeUndefined()
   expect(
     classify({
       platform: 'x',

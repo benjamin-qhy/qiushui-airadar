@@ -26,6 +26,7 @@ export * from './single-table-collector.js'
 export * from './document-translation.js'
 export * from './model-credential-store.js'
 export * from './provider-login.js'
+export * from './pi-models.js'
 
 import { canonicalizeContentUrl, type Source } from '@qiushui-airadar/domain'
 import type {

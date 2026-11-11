@@ -20,6 +20,66 @@ import { SingleTableRepository } from '@qiushui-airadar/runtime'
 
 import { createSingleTableServiceApp } from './single-table-service.js'
 
+it('persists score filter presets and rejects invalid ranges without changing saved settings', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'airadar-score-ranges-'))
+  const configRoot = await initializeSingleTableConfig(
+    path.resolve('config'),
+    root
+  )
+  let service = createSingleTableServiceApp({ dataRoot: root, configRoot })
+  try {
+    let address = await service.start({ host: '127.0.0.1', port: 0 })
+    let url = `http://127.0.0.1:${address.port}/api/config/score-ranges`
+    expect(await (await fetch(url)).json()).toEqual({
+      ranges: [
+        { id: 'score-90', min: 90, max: 100 },
+        { id: 'score-80', min: 80, max: 89 },
+        { id: 'score-60', min: 60, max: 79 },
+        { id: 'score-0', min: 0, max: 59 },
+      ],
+    })
+    const putRanges = (ranges: unknown, origin?: string) =>
+      fetch(url, {
+        method: 'PUT',
+        headers: {
+          'content-type': 'application/json',
+          ...(origin ? { origin } : {}),
+        },
+        body: JSON.stringify({ ranges }),
+      })
+    const ranges = [{ id: 'custom', min: 75, max: 100 }]
+    expect((await putRanges(ranges)).status).toBe(200)
+    for (const invalid of [
+      [{ id: 'x', min: -1, max: 100 }],
+      [{ id: 'x', min: 0, max: 101 }],
+      [{ id: 'x', min: 80, max: 70 }],
+      [{ id: 'x', min: 0.5, max: 100 }],
+      [
+        { id: 'x', min: 0, max: 50 },
+        { id: 'y', min: 50, max: 100 },
+      ],
+      [
+        { id: 'x', min: 0, max: 49 },
+        { id: 'x', min: 50, max: 100 },
+      ],
+      null,
+    ])
+      expect((await putRanges(invalid)).status).toBe(400)
+    expect((await putRanges([], 'https://evil.example')).status).toBe(403)
+    expect(await (await fetch(url)).json()).toEqual({ ranges })
+    await service.stop()
+    service = createSingleTableServiceApp({ dataRoot: root, configRoot })
+    address = await service.start({ host: '127.0.0.1', port: 0 })
+    url = `http://127.0.0.1:${address.port}/api/config/score-ranges`
+    expect(await (await fetch(url)).json()).toEqual({ ranges })
+    expect((await putRanges([])).status).toBe(200)
+    expect(await (await fetch(url)).json()).toEqual({ ranges: [] })
+  } finally {
+    await service.stop()
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
 it('persists independent concurrency settings above the old limits and rejects invalid or cross-origin writes', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'airadar-concurrency-api-'))
   const configRoot = await initializeSingleTableConfig(
@@ -72,7 +132,7 @@ it('persists independent concurrency settings above the old limits and rejects i
   }
 })
 
-it('reads and saves the translation score policy with validation and same-origin protection', async () => {
+it('reports automatic translation for every eligible score with validation and same-origin protection', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'airadar-policy-'))
   const configRoot = await initializeSingleTableConfig(
     path.resolve('config'),
@@ -82,7 +142,7 @@ it('reads and saves the translation score policy with validation and same-origin
   try {
     const { port } = await service.start({ host: '127.0.0.1', port: 0 })
     const url = `http://127.0.0.1:${port}/api/collection/translation-policy`
-    expect(await (await fetch(url)).json()).toEqual({ minimumScore: 60 })
+    expect(await (await fetch(url)).json()).toEqual({ minimumScore: 0 })
     const put = (minimumScore: unknown, origin?: string) =>
       fetch(url, {
         method: 'PUT',
@@ -95,8 +155,8 @@ it('reads and saves the translation score policy with validation and same-origin
     expect((await put(60.5)).status).toBe(400)
     expect((await put(101)).status).toBe(400)
     expect((await put(0, 'https://evil.example')).status).toBe(403)
-    expect((await put(70)).status).toBe(200)
-    expect(await (await fetch(url)).json()).toEqual({ minimumScore: 70 })
+    expect((await put(70)).status).toBe(400)
+    expect(await (await fetch(url)).json()).toEqual({ minimumScore: 0 })
   } finally {
     await service.stop()
     await rm(root, { recursive: true, force: true })
@@ -519,7 +579,7 @@ it('only reruns a failed row after an explicit manual retry request', async () =
         async complete() {
           calls++
           return {
-            text: '---\nkeywords: ["智能体"]\nspam:\n  isJunk: true\n  reason: "低价值"\n---',
+            text: '---\ncategory: null\nthemes: []\nkeywords: ["智能体"]\nspam:\n  isJunk: true\n  reason: "低价值"\n---',
             provider: 'mock',
             model: 'mock',
             durationMs: 1,
@@ -590,7 +650,7 @@ it('processes a waiting video from a supplied transcript without rediscovering i
       gateway: {
         async complete() {
           return {
-            text: '---\nkeywords: ["视频"]\nspam:\n  isJunk: true\n  reason: "低价值"\n---\n完整视频摘要，记录视频内容与可核对的细节。',
+            text: '---\ncategory: null\nthemes: []\nkeywords: ["视频"]\nspam:\n  isJunk: true\n  reason: "低价值"\n---\n完整视频摘要，记录视频内容与可核对的细节。',
             provider: 'mock',
             model: 'mock',
             durationMs: 1,
@@ -655,7 +715,7 @@ it('retries model-failed rows in a persisted batch without reprocessing success'
         async complete() {
           calls++
           return {
-            text: '---\nkeywords: ["智能体"]\nspam:\n  isJunk: true\n  reason: "低价值"\n---',
+            text: '---\ncategory: null\nthemes: []\nkeywords: ["智能体"]\nspam:\n  isJunk: true\n  reason: "低价值"\n---',
             provider: 'mock',
             model: 'mock',
             durationMs: 1,
@@ -864,14 +924,35 @@ it('manages sources, provider credentials, connection tests, and validated YAML'
       { authPath: codexAuthPath }
     )
     expect(modelProviderSave.status).toBe(200)
+    const ollamaSave = await mutate('/api/model-providers/ollama', 'PUT', {
+      baseUrl: 'http://192.168.3.103:11434',
+      modelId: 'gemma4:12b-mlx',
+      modelName: 'Gemma 4 12B MLX',
+    })
+    expect(ollamaSave.status).toBe(200)
     const providersAfterCodex = (await fetch(
       `${base}/api/model-providers`
     ).then((response) => response.json())) as {
       items: Array<Record<string, unknown>>
     }
     expect(providersAfterCodex.items.map((provider) => provider.id)).toEqual(
-      expect.arrayContaining(['openai', 'openai-codex', 'deepseek'])
+      expect.arrayContaining(['openai', 'openai-codex', 'deepseek', 'ollama'])
     )
+    expect(
+      providersAfterCodex.items.find((provider) => provider.id === 'ollama')
+    ).toMatchObject({
+      id: 'ollama',
+      name: 'Ollama',
+      configured: true,
+      verified: false,
+      authMethods: [],
+      apiKeyConfigurable: false,
+      modelCount: 1,
+      authLabel: '无需密钥，通过 Pi 连接 Ollama',
+      baseUrl: 'http://192.168.3.103:11434',
+      modelId: 'gemma4:12b-mlx',
+      modelName: 'Gemma 4 12B MLX',
+    })
     expect(
       providersAfterCodex.items.find(
         (provider) => provider.id === 'openai-codex'
@@ -885,17 +966,27 @@ it('manages sources, provider credentials, connection tests, and validated YAML'
       usesDefaultPath: false,
     })
     expect(
+      (await mutate('/api/model-providers/ollama/test', 'POST', {})).status
+    ).toBe(200)
+    expect(
       (await fetch(`${base}/api/models`).then((response) =>
         response.json()
       )) as unknown
     ).toMatchObject({
-      availableModelGroups: [],
+      availableModelGroups: [
+        {
+          providerId: 'ollama',
+          providerName: 'Ollama',
+          models: [{ id: 'gemma4:12b-mlx', name: 'Gemma 4 12B MLX' }],
+        },
+      ],
     })
     expect(
       (await mutate('/api/model-providers/openai-codex/test', 'POST', {}))
         .status
     ).toBe(200)
     expect(modelConnectionTests).toEqual([
+      { providerId: 'ollama', modelId: 'gemma4:12b-mlx' },
       { providerId: 'openai-codex', modelId: 'gpt-5.5' },
     ])
     expect(
@@ -1172,9 +1263,9 @@ it('defaults Twitter video processing off, retires pending videos with an explic
         translation_status: 'skipped',
       })
       expect(reopened.getById(youtube.id)).toMatchObject({
-        is_unprocessed: 1,
+        is_unprocessed: 0,
         is_junk: 0,
-        unprocessed_reason: '视频内容',
+        unprocessed_reason: null,
       })
     } finally {
       reopened.close()
@@ -1243,7 +1334,7 @@ it('retries an old redirected article directly without scanning the latest posts
     gateway: {
       async complete() {
         return {
-          text: '---\nkeywords: [测试]\nspam: {isJunk: true, reason: "测试内容"}\n---\n中文摘要',
+          text: '---\ncategory: null\nthemes: []\nkeywords: [测试]\nspam: {isJunk: true, reason: "测试内容"}\n---\n中文摘要',
           provider: 'mock',
           model: 'mock',
           durationMs: 1,
@@ -1408,12 +1499,13 @@ it('migrates rule exclusions and unsupported media into a separate module, prese
       }>
     }
     expect(result.items.map((x) => x.id).sort()).toEqual(
-      [oldRule.id, pending.id, audio.id, pdf.id, app.id, tool.id].sort()
+      [oldRule.id, audio.id, pdf.id, app.id, tool.id].sort()
     )
     for (const item of result.items) {
       expect(item.processStatus).toBe('unprocessed')
       expect(item.junk.isJunk).toBe(false)
     }
+    expect(result.items.some((x) => x.id === pending.id)).toBe(false)
     expect(result.items.find((x) => x.id === audio.id)?.kind).toBe('audio')
     expect(result.items.find((x) => x.id === tool.id)?.kind).toBe('article')
     const check = new DatabaseSync(path.join(root, 'qiushui-airadar.sqlite'))
@@ -1463,7 +1555,7 @@ it('migrates rule exclusions and unsupported media into a separate module, prese
     const all = (await (
       await fetch(base + '/api/contents?scope=unprocessed')
     ).json()) as { items: unknown[] }
-    expect(all.items).toHaveLength(507)
+    expect(all.items).toHaveLength(506)
     const normal = (await (await fetch(base + '/api/contents')).json()) as {
       items: Array<{ processStatus: string }>
     }

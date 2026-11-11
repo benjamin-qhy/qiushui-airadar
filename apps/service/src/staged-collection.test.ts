@@ -57,28 +57,22 @@ function model(events: string[]): SingleTableModelGateway {
     async complete(input) {
       events.push(input.stage)
       await new Promise((resolve) => setTimeout(resolve, 3))
-      const interest = input.user.includes('low')
-        ? 3
-        : input.user.includes('sixty')
-          ? 4
-          : 3
-      const gain =
-        input.user.includes('low') || input.user.includes('sixty') ? 3 : 5
       return {
-        text:
-          input.stage === 'classify'
-            ? '---\nkeywords: [测试]\nspam: {isJunk: false, reason: null}\n---\n中文摘要。'
-            : input.stage === 'score'
-              ? JSON.stringify({
-                  valueSummary: '有价值',
-                  scores: {
-                    interestFit: { level: interest, reason: '兴趣' },
-                    concreteGain: { level: gain, reason: '收获' },
-                    substance: { level: 3, reason: '扎实' },
-                    newInformation: { level: 3, reason: '新信息' },
-                  },
-                })
-              : '{"chineseTitle":null,"chineseBody":"中文\n正文"}',
+        text: input.user.startsWith('请按系统规则理解')
+          ? '{"titleZh":"编辑标题","summaryZh":"中文摘要。","editorialJudgment":""}'
+          : input.user.includes('主推文内容：')
+            ? 'title_zh: 中文标题\nbody_zh: 中文正文'
+            : input.stage === 'classify'
+              ? '---\ncategory: 教程/实践\nthemes: []\nkeywords: [测试]\nspam: {isJunk: false, reason: null}\n---\n中文摘要。'
+              : input.stage === 'score'
+                ? JSON.stringify({
+                    attentionScore: input.user.includes('low')
+                      ? 50
+                      : input.user.includes('sixty')
+                        ? 60
+                        : 80,
+                  })
+                : '{"chineseTitle":null,"chineseBody":"中文\n正文"}',
         provider: 'test',
         model: 'fixture',
         durationMs: 3,
@@ -204,7 +198,7 @@ it('runs ten source scans and ten analyses concurrently while using an independe
   expect((await readCollectionRun(setup.dataRoot))?.translated).toBe(12)
 })
 
-it('saves all discoveries before AI, analyzes concurrently, then translates only non-junk scores >=60 irrespective of recommendation', async () => {
+it('saves all discoveries before AI, analyzes concurrently, then translates all eligible scores', async () => {
   const setup = await fixture()
   const events: string[] = []
   let concurrent = 0
@@ -238,7 +232,7 @@ it('saves all discoveries before AI, analyzes concurrently, then translates only
       .filter((stage) => stage === 'score'),
     JSON.stringify(events)
   ).toHaveLength(6)
-  expect(events.filter((stage) => stage === 'translate')).toHaveLength(4)
+  expect(events.filter((stage) => stage === 'translate')).toHaveLength(6)
   expect(maximum).toBe(3)
   const repository = await SingleTableRepository.open(setup.dataRoot)
   try {
@@ -246,7 +240,7 @@ it('saves all discoveries before AI, analyzes concurrently, then translates only
     expect(rows).toHaveLength(6)
     expect(
       rows
-        .filter((row) => row.title === 'sixty')
+        .filter((row) => String(row.external_content_id).endsWith('-sixty'))
         .every(
           (row) =>
             row.total_score === 60 && row.translation_status === 'succeeded'
@@ -254,7 +248,7 @@ it('saves all discoveries before AI, analyzes concurrently, then translates only
     ).toBe(true)
     expect(
       rows
-        .filter((row) => row.title === 'high')
+        .filter((row) => String(row.external_content_id).endsWith('-high'))
         .every(
           (row) =>
             row.recommendation === 'none' &&
@@ -263,12 +257,13 @@ it('saves all discoveries before AI, analyzes concurrently, then translates only
     ).toBe(true)
     expect(
       rows
-        .filter((row) => row.title === 'low')
-        .every((row) => row.translation_status === 'skipped')
+        .filter((row) => String(row.external_content_id).endsWith('-low'))
+        .every((row) => row.translation_status === 'succeeded')
     ).toBe(true)
     expect(
       await repository.readBody(
-        rows.find((row) => row.title === 'high')!.id,
+        rows.find((row) => String(row.external_content_id).endsWith('-high'))!
+          .id,
         'zh'
       )
     ).toBe('中文\n正文')
@@ -277,7 +272,7 @@ it('saves all discoveries before AI, analyzes concurrently, then translates only
   }
   const run = await readCollectionRun(setup.dataRoot)
   expect(run?.phase).toBe('finished')
-  expect(run?.translated).toBe(4)
+  expect(run?.translated).toBe(6)
   expect(
     run?.sources.reduce((sum, entry) => sum + (entry.newlyInflow ?? 0), 0)
   ).toBe(6)
@@ -364,7 +359,7 @@ it('resumes the durable analyzed jobs after interruption without rescanning or r
   expect(events.filter((event) => event.startsWith('scan:'))).toHaveLength(1)
   expect(events.filter((event) => event === 'score')).toHaveLength(scores)
   expect((await readCollectionRun(setup.dataRoot))?.id).toBe(interrupted?.id)
-  expect((await readCollectionRun(setup.dataRoot))?.translated).toBe(2)
+  expect((await readCollectionRun(setup.dataRoot))?.translated).toBe(3)
   expect(await readCollectionHistory(setup.dataRoot)).toHaveLength(1)
   const work = await readFile(
     path.join(setup.dataRoot, 'collection-work', interrupted!.id, 'work.json'),
@@ -377,19 +372,8 @@ it('resumes the durable analyzed jobs after interruption without rescanning or r
   ).toBe(true)
 })
 
-it('does not translate 59-point content and never scores or translates junk', async () => {
+it('translates low-scoring content and never scores or translates junk', async () => {
   const setup = await fixture(['first'])
-  const config = await loadSingleTableConfig(setup.configRoot)
-  config.analysis.scoring.weights = {
-    interest_fit: 36,
-    concrete_gain: 28,
-    substance: 20,
-    new_information: 16,
-  }
-  await writeFile(
-    path.join(setup.configRoot, 'analysis.yaml'),
-    JSON.stringify(config.analysis)
-  )
   const events: string[] = []
   const base = model(events)
   await collectSingleTable({
@@ -399,7 +383,7 @@ it('does not translate 59-point content and never scores or translates junk', as
       async complete(input) {
         if (input.stage === 'classify' && input.user.includes('high'))
           return {
-            text: '---\nkeywords: []\nspam: {isJunk: true, reason: 广告}\n---\n',
+            text: '---\ncategory: null\nthemes: []\nkeywords: []\nspam: {isJunk: true, reason: 广告}\n---\n',
             provider: 'test',
             model: 'fixture',
             durationMs: 1,
@@ -409,12 +393,18 @@ it('does not translate 59-point content and never scores or translates junk', as
     },
   })
   expect(events.filter((event) => event === 'score')).toHaveLength(2)
-  expect(events).not.toContain('translate')
+  expect(events.filter((event) => event === 'translate')).toHaveLength(2)
   const repository = await SingleTableRepository.open(setup.dataRoot)
   try {
     const rows = repository.search({})
-    expect(rows.find((row) => row.title === 'sixty')?.total_score).toBe(59)
-    expect(rows.find((row) => row.title === 'high')?.is_junk).toBe(1)
+    expect(
+      rows.find((row) => String(row.external_content_id).endsWith('-low'))
+        ?.total_score
+    ).toBe(50)
+    expect(
+      rows.find((row) => String(row.external_content_id).endsWith('-high'))
+        ?.is_junk
+    ).toBe(1)
   } finally {
     repository.close()
   }
@@ -709,7 +699,7 @@ it('excludes Twitter video posts before any enrichment or AI call by default and
   }
 })
 
-it('routes video, audio, interactive pages and unsupported files into unprocessed without resolution or AI', async () => {
+it('processes YouTube videos while keeping unsupported content unprocessed', async () => {
   const setup = await fixture(['first'])
   const config = await loadSingleTableConfig(setup.configRoot)
   config.sources.sources[0]!.platform = 'youtube'
@@ -746,7 +736,7 @@ it('routes video, audio, interactive pages and unsupported files into unprocesse
         }
       },
       async resolve() {
-        throw new Error('Excluded content must not be fetched')
+        throw new Error('captions are missing; manual transcription required')
       },
     },
     gateway: {
@@ -757,7 +747,11 @@ it('routes video, audio, interactive pages and unsupported files into unprocesse
   })
   const repository = await SingleTableRepository.open(setup.dataRoot)
   try {
-    expect(repository.unprocessedRows()).toHaveLength(4)
+    expect(repository.unprocessedRows()).toHaveLength(3)
+    expect(
+      repository.search({}).find((row) => row.external_content_id === 'video')
+        ?.process_status
+    ).toBe('waiting-manual-transcription')
     expect(
       repository
         .unprocessedRows()
@@ -769,7 +763,152 @@ it('routes video, audio, interactive pages and unsupported files into unprocesse
   const run = await readCollectionRun(setup.dataRoot)
   expect(run?.sources[0]).toMatchObject({
     newlyCompleted: 0,
-    failed: 0,
-    skipped: 4,
+    failed: 1,
+    skipped: 3,
   })
+})
+
+it('deduplicates YouTube before metadata screening and never resolves rejected descriptions', async () => {
+  const setup = await fixture(['first'])
+  const cfg = await loadSingleTableConfig(setup.configRoot)
+  cfg.sources.sources[0]!.platform = 'youtube'
+  await writeFile(
+    path.join(setup.configRoot, 'sources.yaml'),
+    JSON.stringify(cfg.sources)
+  )
+  let screenings = 0
+  const resolved: string[] = []
+  const base = model([])
+  const options = {
+    ...setup,
+    gateway: {
+      async complete(
+        input: Parameters<SingleTableModelGateway['complete']>[0]
+      ) {
+        if (input.system.includes('仅排除明显不相关')) {
+          screenings++
+          return {
+            text: '{"exclude":true,"reason":"足球赛事"}',
+            provider: 'test',
+            model: 'test',
+            durationMs: 0,
+          }
+        }
+        return base.complete(input)
+      },
+    },
+    provider: {
+      async discover() {
+        return {
+          items: [
+            {
+              externalId: 'reject',
+              kind: 'video' as const,
+              body: 'Football match',
+            },
+            {
+              externalId: 'reject',
+              kind: 'video' as const,
+              body: 'Football match',
+            },
+            { externalId: 'keep', kind: 'video' as const },
+            {
+              externalId: 'old',
+              kind: 'video' as const,
+              publishedAt: '2000-01-01T00:00:00Z',
+            },
+          ],
+          request: {},
+          response: {},
+        }
+      },
+      async resolve(source: { id: string }, item: { externalId: string }) {
+        resolved.push(item.externalId)
+        return {
+          original: {
+            platform: 'youtube',
+            sourceType: 'youtube',
+            sourceAccountId: source.id,
+            sourceAccountName: 'Channel',
+            externalContentId: item.externalId,
+            title: 'Video',
+            body: 'Complete transcript.',
+            kind: 'video' as const,
+            format: 'subtitle' as const,
+            language: 'en' as const,
+            videoDurationSeconds: 1800,
+          },
+        }
+      },
+    },
+  }
+  await collectSingleTable(options)
+  await collectSingleTable(options)
+  expect(screenings).toBe(1)
+  expect(resolved).toEqual(['keep'])
+  const repository = await SingleTableRepository.open(setup.dataRoot)
+  try {
+    expect(
+      repository.search({}).find((row) => row.external_content_id === 'keep')
+    ).toMatchObject({
+      total_score: 80,
+      translation_skip_reason: 'video_duration_limit',
+      summary: '中文摘要。',
+    })
+  } finally {
+    repository.close()
+  }
+})
+
+it('limits a new YouTube channel to twenty videos and completes the initial window', async () => {
+  const setup = await fixture(['first'])
+  const cfg = await loadSingleTableConfig(setup.configRoot)
+  cfg.sources.sources[0]!.platform = 'youtube'
+  await writeFile(
+    path.join(setup.configRoot, 'sources.yaml'),
+    JSON.stringify(cfg.sources)
+  )
+  let discoveries = 0
+  const resolved: string[] = []
+  await collectSingleTable({
+    ...setup,
+    gateway: model([]),
+    provider: {
+      async discover() {
+        discoveries++
+        return {
+          items: Array.from({ length: 25 }, (_, i) => ({
+            externalId: `video-${i}`,
+            kind: 'video' as const,
+          })),
+          nextCursor: 'older-videos',
+          request: {},
+          response: {},
+        }
+      },
+      async resolve(source, item) {
+        resolved.push(item.externalId)
+        return {
+          original: {
+            platform: 'youtube',
+            sourceType: 'youtube',
+            sourceAccountId: source.id,
+            sourceAccountName: 'Channel',
+            externalContentId: item.externalId,
+            title: 'Video',
+            body: '完整字幕。',
+            kind: 'video',
+            format: 'subtitle',
+            language: 'zh',
+            videoDurationSeconds: 1800,
+          },
+        }
+      },
+    },
+  })
+  expect(discoveries).toBe(1)
+  expect(resolved).toHaveLength(20)
+  const state = await loadSourceState(setup.configRoot)
+  expect(state.sources.first?.pending_window).toBeUndefined()
+  expect(state.sources.first?.discovered_until).toBeTruthy()
 })

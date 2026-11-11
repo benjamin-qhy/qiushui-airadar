@@ -184,7 +184,7 @@ it('loads all YAML configuration and preserves source order', async () => {
     substance: 20,
     new_information: 10,
   })
-  expect(config.analysis.translation.minimum_total_score).toBe(60)
+  expect(config.analysis.translation.minimum_total_score).toBe(0)
   expect(config.analysis.transcription.auto).toBe(false)
   expect(config.analysis.model).toEqual({
     provider: 'codex',

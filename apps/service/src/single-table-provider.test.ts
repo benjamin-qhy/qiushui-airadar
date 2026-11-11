@@ -478,3 +478,45 @@ it('falls back to native HTTP when the configured X article provider fails', asy
   expect(resolved.calls).toHaveLength(3)
   expect(resolved.calls?.[0]?.response).toMatchObject({ status: 503 })
 })
+
+it('keeps Chinese caption language and never automatically transcribes missing YouTube captions', async () => {
+  const source = {
+    id: 'yt',
+    platform: 'youtube',
+    account_name: 'Channel',
+    external_identity: 'https://www.youtube.com/@test',
+    language: 'en' as const,
+    enabled: true,
+  }
+  const item = {
+    externalId: 'oVKGKdIAgtg',
+    kind: 'video' as const,
+    url: 'https://www.youtube.com/watch?v=oVKGKdIAgtg',
+  }
+  let transcriptions = 0
+  const missing = createSingleTableSourceProvider({
+    tikHubToken: 'test',
+    fetch: async () => Response.json({ code: 200, data: { captions: [] } }),
+    xVideoTranscriber: async () => {
+      transcriptions++
+      return 'unexpected'
+    },
+  })
+  await expect(missing.resolve(source, item)).rejects.toThrow(
+    'manual transcription required'
+  )
+  expect(transcriptions).toBe(0)
+  let calls = 0
+  const chinese = createSingleTableSourceProvider({
+    tikHubToken: 'test',
+    fetch: async () =>
+      Response.json({
+        code: 200,
+        data:
+          ++calls === 1
+            ? { captions: [{ language_code: 'zh-Hans' }] }
+            : { text: '原始中文字幕。' },
+      }),
+  })
+  expect((await chinese.resolve(source, item)).original.language).toBe('zh')
+})

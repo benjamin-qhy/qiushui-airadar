@@ -72,6 +72,22 @@ afterEach(async () => {
 })
 
 describe('single-table content storage', () => {
+  it('returns the complete filter snapshot beyond the normal 500-row cap', async () => {
+    const { repository } = await setup()
+    for (let index = 0; index < 501; index++) {
+      await repository.saveOriginal({
+        ...shortPost,
+        externalContentId: String(index),
+        canonicalUrl: 'https://x.com/openai/status/' + index,
+      })
+    }
+    expect(repository.search({ limit: 9999 })).toHaveLength(500)
+    expect(repository.search({ allRows: true })).toHaveLength(501)
+    expect(
+      repository.search({ allRows: true, keyword: 'nonexistent' })
+    ).toHaveLength(0)
+  })
+
   it('keeps source HTTP errors out of model retry and includes model response errors', async () => {
     const { repository } = await setup()
     const article = await repository.saveOriginal({
@@ -111,9 +127,7 @@ describe('single-table content storage', () => {
     expect(original.execution_log_markdown_path).toMatch(
       /^contents\/\d{8}\/x-OpenAI-123-[a-f0-9]{8}\/执行日志\.md$/u
     )
-    const database = new DatabaseSync(
-      path.join(root, 'qiushui-airadar.sqlite')
-    )
+    const database = new DatabaseSync(path.join(root, 'qiushui-airadar.sqlite'))
     expect(
       database
         .prepare(
@@ -222,7 +236,7 @@ describe('single-table content storage', () => {
       '中文标题',
       83
     )
-    expect(translated.summary).toBe('一套实用的 AI 智能体工作流。')
+    expect(translated.summary).toBe(shortPost.body)
     expect(translated.title).toBe('中文标题')
     const chinese = await readFile(
       path.join(root, translated.chinese_markdown_path!),
@@ -282,6 +296,15 @@ describe('single-table content storage', () => {
       keywords: ['智能体'],
       isJunk: false,
     })
+    await repository.saveClassification(row.id, {
+      keywords: ['智能体'],
+      tags: ['教程/实践', 'AI 落地'],
+      isJunk: false,
+    })
+    expect(
+      repository.search({ tag: 'AI 落地', keyword: '智能体' })
+    ).toHaveLength(1)
+    expect(repository.search({ tag: '智能体' })).toHaveLength(0)
     expect(repository.search({ keyword: '智能体' })).toHaveLength(1)
     expect(repository.search({ keyword: '不存在' })).toHaveLength(0)
   })
@@ -380,4 +403,40 @@ describe('single-table content storage', () => {
     expect(repository.getById(row.id)?.process_status).toBe('failed')
     await expect(stat(originalFile)).rejects.toMatchObject({ code: 'ENOENT' })
   })
+})
+
+it('deduplicates YouTube video identity across channels and X links, including legacy records', async () => {
+  const { root, repository } = await setup()
+  const video: OriginalContent = {
+    ...shortPost,
+    platform: 'youtube',
+    sourceType: 'youtube',
+    externalContentId: 'oVKGKdIAgtg',
+    canonicalUrl: 'https://www.youtube.com/watch?v=oVKGKdIAgtg',
+    kind: 'video',
+  }
+  const first = await repository.saveOriginal(video)
+  const linked = {
+    ...video,
+    platform: 'x',
+    sourceType: 'x',
+    sourceAccountId: 'another',
+    externalContentId: 'tweet',
+    canonicalUrl: 'https://youtu.be/oVKGKdIAgtg?t=40',
+  }
+  expect(contentIdentity(linked).key).toBe(contentIdentity(video).key)
+  expect((await repository.saveOriginal(linked)).id).toBe(first.id)
+  const database = new DatabaseSync(path.join(root, 'qiushui-airadar.sqlite'))
+  try {
+    database
+      .prepare('UPDATE contents SET identity_key=? WHERE id=?')
+      .run('source:openai:content:oVKGKdIAgtg', first.id)
+  } finally {
+    database.close()
+  }
+  expect(repository.get(contentIdentity(linked).key)?.id).toBe(first.id)
+  expect(
+    (await repository.saveOriginal({ ...video, sourceAccountId: 'third' })).id
+  ).toBe(first.id)
+  expect(repository.search({})).toHaveLength(1)
 })

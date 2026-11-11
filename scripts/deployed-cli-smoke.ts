@@ -236,14 +236,18 @@ try {
   reopened.close()
   assert.equal(await readFile(profile, 'utf8'), profileBefore)
   assert.equal(await readFile(join(dataRoot, '.env'), 'utf8'), secretBefore)
-  assert.equal(
-    (
-      await readdir(
-        join(installRoot, 'node_modules/@qiushui-airadar/cli/prompts')
-      )
-    ).length,
-    3
+  const installedPrompts = join(
+    installRoot,
+    'node_modules/@qiushui-airadar/cli/prompts'
   )
+  const sourcePrompts = join(process.cwd(), 'docs/prompts/single-table-content')
+  const promptFiles = (await readdir(sourcePrompts)).sort()
+  assert.deepEqual((await readdir(installedPrompts)).sort(), promptFiles)
+  for (const file of promptFiles)
+    assert.equal(
+      await readFile(join(installedPrompts, file), 'utf8'),
+      await readFile(join(sourcePrompts, file), 'utf8')
+    )
   process.stdout.write(
     `PASS: npm install ${manifest.version} → ${currentVersion}; standalone Web/assets/API; data/read/favorite/config/secrets preserved.\n`
   )

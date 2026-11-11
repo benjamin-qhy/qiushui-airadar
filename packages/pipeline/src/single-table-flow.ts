@@ -1,10 +1,22 @@
+import {
+  checkPostCopy,
+  parseTranslateOutput,
+  needsShortTweetTranslation,
+  isShortTweet,
+  clampText,
+  type ReaderCopy,
+} from './x-post-writing.js'
+import { contentCategories, contentThemes } from '@qiushui-airadar/domain'
 import { readFile } from 'node:fs/promises'
 import path from 'node:path'
 
 import { parse as parseYaml } from 'yaml'
 import { z } from 'zod'
 import type { CredentialStore, Model, Models } from '@earendil-works/pi-ai'
-import { createApplicationModels } from './pi-models.js'
+import {
+  createApplicationModels,
+  type OllamaProviderConfig,
+} from './pi-models.js'
 
 import {
   contentIdentity,
@@ -12,7 +24,6 @@ import {
   type ContentRow,
   type LogEvent,
   type OriginalContent,
-  type ScoreDimension,
   type ScoringRules,
 } from '@qiushui-airadar/runtime'
 import { createReadOnlyCodexCredentialStore } from './index.js'
@@ -30,6 +41,14 @@ const promptNames = {
 } as const
 
 const classificationSchema = z.object({
+  category: z.enum(contentCategories).nullable(),
+  themes: z
+    .array(z.string())
+    .transform((items) =>
+      [...new Set(items)]
+        .filter((theme) => contentThemes.some((allowed) => allowed === theme))
+        .slice(0, 2)
+    ),
   keywords: z
     .array(z.string())
     .transform((items) =>
@@ -37,19 +56,11 @@ const classificationSchema = z.object({
     ),
   spam: z.object({ isJunk: z.boolean(), reason: z.string().nullable() }),
 })
-const scoreSchema = z.object({
-  level: z.number().int().min(1).max(5),
-  reason: z.string().trim().min(1),
-})
-const scoringSchema = z.object({
-  valueSummary: z.string().trim().min(1),
-  scores: z.object({
-    interestFit: scoreSchema,
-    concreteGain: scoreSchema,
-    substance: scoreSchema,
-    newInformation: scoreSchema,
-  }),
-})
+const scoringSchema = z
+  .object({
+    attentionScore: z.number().int().min(0).max(100),
+  })
+  .strict()
 const translationSchema = z.object({
   chineseTitle: z.string().trim().min(1).nullable(),
   chineseBody: z.string().trim().min(1),
@@ -64,8 +75,50 @@ export interface SingleTableModelResponse {
   durationMs: number
 }
 
+type PostImage = { type: 'image'; data: string; mimeType: string }
+async function firstPostImage(url?: string): Promise<PostImage | undefined> {
+  if (!url || !/^https:\/\/pbs\.twimg\.com\//iu.test(url)) return
+  try {
+    const res = await fetch(url, {
+      signal: AbortSignal.timeout(8000),
+      redirect: 'error',
+    })
+    const mimeType = res.headers.get('content-type')?.split(';')[0]
+    if (
+      !res.ok ||
+      !mimeType ||
+      !['image/png', 'image/webp', 'image/jpeg', 'image/gif'].includes(
+        mimeType
+      ) ||
+      !res.body
+    )
+      return
+    const reader = res.body.getReader(),
+      chunks: Uint8Array[] = []
+    let size = 0
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+      size += value.length
+      if (size > 8_000_000) {
+        await reader.cancel()
+        return
+      }
+      chunks.push(value)
+    }
+    return {
+      type: 'image',
+      data: Buffer.concat(chunks).toString('base64'),
+      mimeType,
+    }
+  } catch {
+    return
+  }
+}
 export interface SingleTableModelGateway {
+  supportsImages?(stage: keyof typeof promptNames): boolean
   complete(input: {
+    image?: PostImage
     system: string
     user: string
     stage: keyof typeof promptNames
@@ -127,7 +180,9 @@ export function modelProviderSecretName(providerId: string): string {
   return `MODEL_PROVIDER_${providerId.replace(/[^a-z0-9]+/giu, '_').toUpperCase()}_API_KEY`
 }
 
-export function listSingleTableModelProviders(): Array<{
+export function listSingleTableModelProviders(
+  ollama?: OllamaProviderConfig
+): Array<{
   id: string
   name: string
   authMethods: Array<'api_key' | 'oauth'>
@@ -137,12 +192,12 @@ export function listSingleTableModelProviders(): Array<{
   subscription: boolean
   modelCount: number
 }> {
-  const models = createApplicationModels()
+  const models = createApplicationModels({ ollama })
   return models.getProviders().map((provider) => ({
     id: provider.id,
     name: provider.name,
     authMethods: [
-      ...(provider.auth.apiKey ? (['api_key'] as const) : []),
+      ...(provider.auth.apiKey?.login ? (['api_key'] as const) : []),
       ...(provider.auth.oauth ? (['oauth'] as const) : []),
     ],
     apiKeyLabel: provider.auth.apiKey?.name,
@@ -153,12 +208,15 @@ export function listSingleTableModelProviders(): Array<{
   }))
 }
 
-export function listSingleTableModels(providerId: string): Array<{
+export function listSingleTableModels(
+  providerId: string,
+  ollama?: OllamaProviderConfig
+): Array<{
   id: string
   name: string
 }> {
   const normalized = normalizeSingleTableProviderId(providerId)
-  return createApplicationModels()
+  return createApplicationModels({ ollama })
     .getModels(normalized)
     .map((model) => ({
       id: model.id,
@@ -169,10 +227,11 @@ export function listSingleTableModels(providerId: string): Array<{
 export function createSingleTableModelGateway(
   credentials: CredentialStore,
   providerId: string,
-  routing: string | SingleTableModelRouting
+  routing: string | SingleTableModelRouting,
+  ollama?: OllamaProviderConfig
 ): SingleTableModelGateway {
   const normalizedProvider = normalizeSingleTableProviderId(providerId)
-  const models = createApplicationModels({ credentials })
+  const models = createApplicationModels({ credentials, ollama })
   const routes: SingleTableModelRouting =
     typeof routing === 'string' ? { default: routing } : routing
   const modelRoutes = [
@@ -199,6 +258,12 @@ function createGateway(
   routes: SingleTableModelRouting
 ): SingleTableModelGateway {
   return {
+    supportsImages(stage) {
+      const r = resolveSingleTableModelRoute(providerId, routes, stage)
+      return (
+        models.getModel(r.provider, r.model)?.input.includes('image') ?? false
+      )
+    },
     getCapacity(stage) {
       const route = resolveSingleTableModelRoute(providerId, routes, stage)
       const model = models.getModel(route.provider, route.model)!
@@ -227,7 +292,13 @@ function createGateway(
         context: {
           systemPrompt: input.system,
           messages: [
-            { role: 'user' as const, content: input.user, timestamp: 0 },
+            {
+              role: 'user' as const,
+              content: input.image
+                ? [{ type: 'text' as const, text: input.user }, input.image]
+                : input.user,
+              timestamp: 0,
+            },
           ],
         },
         options: {
@@ -287,7 +358,14 @@ function createGateway(
       }
       return {
         text,
-        request,
+        request: input.image
+          ? {
+              stage: input.stage,
+              user: input.user,
+              system: input.system,
+              imageMimeType: input.image.mimeType,
+            }
+          : request,
         response,
         provider: message.provider,
         model: message.model,
@@ -379,34 +457,45 @@ function parseFrontmatter(markdown: string): {
   attributes: unknown
   body: string
 } {
-  const match = /^---\s*\n([\s\S]*?)\n---\s*(?:\n|$)/u.exec(markdown.trim())
+  const clean = markdown
+    .trim()
+    .replace(/^```(?:markdown|yaml)?\s*\n([\s\S]*?)\n```$/iu, '$1')
+  const match = /^---\s*\n([\s\S]*?)\n---\s*(?:\n|$)/u.exec(clean)
   if (!match) throw new Error('Model response has no YAML front matter')
   return {
     attributes: parseYaml(match[1]!),
-    body: markdown.trim().slice(match[0].length).trim(),
+    body: clean.slice(match[0].length).trim(),
   }
 }
 
-function parseModelJson(text: string): unknown {
+export function parseModelJson(text: string): unknown {
   const trimmed = text.trim()
   const fenced = /^```(?:json)?\s*\n([\s\S]*?)\n```$/iu.exec(trimmed)
   const json = fenced ? fenced[1]! : trimmed
   try {
     return JSON.parse(json)
   } catch {
-    // Some models emit literal newlines/tabs inside JSON strings. Escape only
-    // those characters; malformed structure and invalid schemas still fail.
+    // Repair string escaping only. Keep malformed JSON structure as an error.
     let inside = false
-    let escaped = false
     let repaired = ''
-    for (const character of json) {
-      if (inside && character.charCodeAt(0) < 32) {
+    for (let i = 0; i < json.length; i++) {
+      const character = json[i]!
+      if (inside && character === '\\') {
+        const next = json[i + 1]
+        const validUnicode =
+          next === 'u' && /^[0-9a-f]{4}$/iu.test(json.slice(i + 2, i + 6))
+        if (next && ('"\\/bfnrt'.includes(next) || validUnicode)) {
+          repaired += character + next
+          i++
+        } else {
+          repaired += '\\\\'
+        }
+      } else if (inside && character.charCodeAt(0) < 32) {
         repaired += JSON.stringify(character).slice(1, -1)
       } else {
         repaired += character
-        if (!escaped && character === '"') inside = !inside
+        if (character === '"') inside = !inside
       }
-      escaped = !escaped && character === '\\'
     }
     return JSON.parse(repaired)
   }
@@ -437,9 +526,10 @@ async function call<T>(
   stage: keyof typeof promptNames,
   variables: Record<string, string>,
   validate: (text: string) => T,
-  maxTokens?: number
+  maxTokens?: number,
+  name: string = promptNames[stage],
+  image?: PostImage
 ): Promise<{ value: T; metadata: SingleTableModelResponse }> {
-  const name = promptNames[stage]
   const prompt = await readFile(path.join(options.promptsRoot, name), 'utf8')
   const system = getMarkdownSection(
     prompt,
@@ -456,6 +546,7 @@ async function call<T>(
       system,
       user,
       maxTokens,
+      image,
     })
     const parsed = validate(received.text)
     await options.repository.appendLog(row.id, {
@@ -493,6 +584,179 @@ async function call<T>(
   }
 }
 
+async function writeXPost(
+  options: ContentFlowOptions,
+  row: ContentRow,
+  variables: Record<string, string>,
+  score: number
+) {
+  const { original } = options
+  const text = original.body.trim()
+  const quote = original.quotedPost
+  if (!text.replace(/https?:\/\/\S+/giu, '').trim())
+    return {
+      mode: 'original-link',
+      title: text || original.title,
+      summary: text,
+    }
+  const material = {
+    title: original.originalTitle || original.title,
+    text,
+    mainText: text,
+    sourceKind: 'x_search',
+    documentUrl: original.canonicalUrl,
+    sourceName: original.sourceAccountName,
+    quotedText: quote?.text,
+  }
+  const finish = async (mode: string, draft: ReaderCopy) => {
+    const copy = await checkPostCopy(material, draft, async (issues, first) => {
+      try {
+        const result = await call(
+          options,
+          row,
+          'classify',
+          {
+            ...variables,
+            draft: JSON.stringify({
+              titleZh: first.titleZh,
+              summaryZh: first.summaryZh,
+              reasonZh: first.reasonZh,
+            }),
+            issues: issues.map((issue) => '- ' + issue).join('\n'),
+          },
+          (output) =>
+            z
+              .object({
+                titleZh: z.string().min(1),
+                summaryZh: z.string().min(1),
+                reasonZh: z.string().nullable(),
+              })
+              .parse(parseModelJson(output)),
+          2048,
+          '07-AIHOT-X措辞修订.md'
+        )
+        return result.value
+      } catch (error) {
+        if (
+          error instanceof SyntaxError ||
+          error instanceof z.ZodError ||
+          /refus|content.filter/iu.test(String(error))
+        )
+          return first
+        throw error
+      }
+    })
+    if (!copy.summaryZh.trim())
+      throw new Error('X 帖子文案未通过检查或正文为空，请保留现有文案并复核')
+    return {
+      mode,
+      title: copy.titleZh,
+      summary: copy.summaryZh,
+      reason: copy.reasonZh ?? undefined,
+    }
+  }
+  if (score > 50) {
+    const context = [
+      original.publishedAt && '【发布时间】' + original.publishedAt,
+      original.images?.length && '【媒体】' + original.images.length + ' 张图',
+      original.canonicalUrl && '【原文链接】' + original.canonicalUrl,
+      quote?.text &&
+        '【引用 ' +
+          (quote.authorHandle || '原推') +
+          '】（他人内容）\n' +
+          quote.text,
+      '【正文（作者自己的内容）】\n' + text.slice(0, 60000),
+    ]
+      .filter(Boolean)
+      .join('\n')
+    const understand = (image?: PostImage) =>
+      call(
+        options,
+        row,
+        'classify',
+        { ...variables, original_body_or_transcript: context },
+        (output) =>
+          z
+            .object({
+              titleZh: z.string().min(1),
+              summaryZh: z.string().min(1),
+              editorialJudgment: z.string(),
+            })
+            .parse(parseModelJson(output)),
+        16384,
+        original.kind === 'video'
+          ? '08-视频金字塔摘要.md'
+          : '04-AIHOT长文总结.md',
+        image
+      )
+    try {
+      const image = options.gateway.supportsImages?.('classify')
+        ? await firstPostImage(original.images?.[0]?.url)
+        : undefined
+      let result
+      try {
+        result = await understand(image)
+      } catch (error) {
+        if (
+          !image ||
+          /content.filter/iu.test(String(error)) ||
+          !/image|图片|unsupported|refus/iu.test(String(error))
+        )
+          throw error
+        result = await understand()
+      }
+      return await finish('understand', {
+        ...result.value,
+        reasonZh: result.value.editorialJudgment || null,
+      })
+    } catch (error) {
+      if (!/content.filter|content.policy|safety policy/iu.test(String(error)))
+        throw error
+    }
+  }
+  const short = isShortTweet(text)
+  if (short && !needsShortTweetTranslation(text)) {
+    const main = text.replace(/\s+/gu, ' ')
+    return { mode: 'verbatim', title: main, summary: main }
+  }
+  const stem = short ? '06-AIHOT-X短帖' : '06-AIHOT-X长帖'
+  const quoted = quote?.text
+    ? render(
+        await readFile(
+          path.join(options.promptsRoot, stem + '引用.md'),
+          'utf8'
+        ),
+        {
+          quoted_label: quote.authorHandle
+            ? '@' + quote.authorHandle
+            : '引用推文',
+          quoted_text: clampText(quote.text, 1500),
+        }
+      )
+    : ''
+  const result = await call(
+    options,
+    row,
+    'classify',
+    {
+      ...variables,
+      post: clampText(text, 4000),
+      quote: quoted ? '\n\n' + quoted : '',
+    },
+    parseTranslateOutput,
+    2048,
+    stem + '.md'
+  )
+  return finish(short ? 'short' : 'long', {
+    titleZh: result.value.titleZh,
+    summaryZh:
+      (short ? result.value.bodyZh : result.value.summaryZh) ||
+      result.value.bodyZh ||
+      result.value.summaryZh,
+    reasonZh: null,
+  })
+}
+
 export async function processSingleTableContent(
   options: ContentFlowOptions
 ): Promise<ContentRow> {
@@ -508,20 +772,10 @@ export async function processSingleTableContent(
     source_account_name: original.sourceAccountName,
     content_kind: original.kind,
     original_language: original.language,
-    original_body_or_transcript: original.body,
+    original_body_or_transcript: original.quotedPost?.text
+      ? original.body + '\n\n引用推文：\n' + original.quotedPost.text
+      : original.body,
     profile_exclusions: options.profile.exclusions.join('；'),
-    profile_interests_and_goals: [
-      ...options.profile.interests,
-      ...options.profile.goals,
-    ].join('；'),
-    scoring_dimensions: [
-      ['兴趣匹配', options.scoring.weights.interest_fit],
-      ['具体收获', options.scoring.weights.concrete_gain],
-      ['内容扎实度', options.scoring.weights.substance],
-      ['新信息', options.scoring.weights.new_information],
-    ]
-      .map(([name, weight]) => `${name} ${weight}%`)
-      .join('；'),
     source_format: original.format,
     subtitle_segments_or_none:
       original.format === 'subtitle' ? original.body : '无',
@@ -538,57 +792,72 @@ export async function processSingleTableContent(
     },
     (text) => {
       const parsed = parseFrontmatter(text)
-      const attributes = classificationSchema.parse(parsed.attributes)
-      if (isLong && !parsed.body && !attributes.spam.isJunk)
-        throw new Error('Long content summary is missing')
-      return { ...attributes, body: parsed.body }
+      const value = classificationSchema.parse(parsed.attributes)
+      if (!value.spam.isJunk && !value.category)
+        throw Error('Missing content category')
+      return value
     }
   )
+  const junk =
+    row.junk_source === 'manual' ? Boolean(row.is_junk) : classified.spam.isJunk
+  let summary = original.body
+  const isXPost =
+    original.platform === 'x' &&
+    (original.kind === 'short_post' || original.kind === 'image_post')
+  if (!isXPost && (isLong || original.kind === 'video') && !junk) {
+    const result = await call(
+      options,
+      row,
+      'classify',
+      variables,
+      (text) =>
+        z
+          .object({ summaryZh: z.string().trim().min(1) })
+          .parse(parseModelJson(text)),
+      undefined,
+      original.kind === 'video' ? '08-视频金字塔摘要.md' : '04-AIHOT长文总结.md'
+    )
+    summary = result.value.summaryZh
+  }
   const afterClassification = await options.repository.saveClassification(
     row.id,
     {
       keywords: classified.keywords,
+      tags: classified.category
+        ? [...new Set([classified.category, ...classified.themes])]
+        : [],
       isJunk: classified.spam.isJunk,
       reason: classified.spam.reason ?? undefined,
-      summary: isLong ? classified.body : undefined,
+      summary,
     }
   )
   if (afterClassification.is_junk) return afterClassification
 
-  // The second call receives only original source content and profile, never
-  // the first call's summary or keywords.
   const analysisCall = await call(options, row, 'score', variables, (text) =>
     scoringSchema.parse(parseModelJson(text))
   )
-  const analysis = analysisCall.value
-  const scores: Record<ScoreDimension, { level: number; reason: string }> = {
-    interest_fit: analysis.scores.interestFit,
-    concrete_gain: analysis.scores.concreteGain,
-    substance: analysis.scores.substance,
-    new_information: analysis.scores.newInformation,
-  }
-  const scored = await options.repository.saveScoring(
+  const post = isXPost
+    ? await writeXPost(
+        options,
+        row,
+        variables,
+        analysisCall.value.attentionScore
+      )
+    : undefined
+  const scored = await options.repository.saveAttentionScore(
     row.id,
-    analysis.valueSummary,
-    scores,
-    options.scoring,
-    {
-      provider: analysisCall.metadata.provider,
-      model: analysisCall.metadata.model,
-      promptVersion: '3',
-      profileVersion: options.profileVersion ?? '1',
-      durationMs: analysisCall.metadata.durationMs,
-    }
+    analysisCall.value.attentionScore,
+    analysisCall.metadata,
+    post
   )
   if (original.language !== 'en') return scored
-  if (
-    scored.total_score === null ||
-    scored.total_score < options.translationMinimumTotalScore
-  )
+  if (original.kind === 'video' && analysisCall.value.attentionScore <= 60)
     return options.repository.setTranslationSkipped(
       row.id,
       'below_score_threshold'
     )
+  if (post?.mode === 'original-link')
+    return options.repository.setTranslationSkipped(row.id, 'link_only')
   const skipReason = automaticTranslationSkipReason(
     {
       contentId: row.id,
@@ -598,10 +867,12 @@ export async function processSingleTableContent(
       kind: original.kind,
       videoDurationSeconds: original.videoDurationSeconds,
     },
-    options.automaticTranslationLimits ?? {
-      maximumVideoDurationSeconds: 1_800,
-      maximumSourceCharacters: 27_000,
-    }
+    original.platform === 'youtube'
+      ? { maximumVideoDurationSeconds: 1800, maximumSourceCharacters: Infinity }
+      : (options.automaticTranslationLimits ?? {
+          maximumVideoDurationSeconds: 1_800,
+          maximumSourceCharacters: 27_000,
+        })
   )
   if (skipReason)
     return options.repository.setTranslationSkipped(row.id, skipReason)
@@ -611,6 +882,17 @@ export async function processSingleTableContent(
     row: scored,
     manual: false,
   })
+}
+
+// X uses mathematical Latin letters as decorative bold and italic. Keep code and URLs literal.
+function readablePostText(text: string): string {
+  return text.replace(
+    /```[\s\S]*?```|`[^`\n]*`|https?:\/\/\S+|[\u{1D400}-\u{1D6A3}]/gu,
+    (token) =>
+      token.length === 2 && /^[A-Za-z]$/.test(token.normalize('NFKC'))
+        ? token.normalize('NFKC')
+        : token
+  )
 }
 
 export async function translateSingleTableContent(
@@ -625,12 +907,36 @@ export async function translateSingleTableContent(
     row.translated_to_chinese
   )
     throw new Error('Content does not qualify for translation')
+  if (!options.manual && original.kind === 'video') {
+    if (row.total_score == null || row.total_score <= 60)
+      return options.repository.setTranslationSkipped(
+        row.id,
+        'below_score_threshold'
+      )
+    const reason = automaticTranslationSkipReason(
+      {
+        contentId: row.id,
+        body: original.body,
+        format: original.format,
+        kind: original.kind,
+        videoDurationSeconds: original.videoDurationSeconds,
+      },
+      { maximumVideoDurationSeconds: 1800, maximumSourceCharacters: Infinity }
+    )
+    if (reason) return options.repository.setTranslationSkipped(row.id, reason)
+  }
   const capacity = options.gateway.getCapacity?.('translate') ?? {
     contextWindow: 32_000,
     maxOutputTokens: 16_000,
     provider: 'unknown',
     model: 'unknown',
   }
+  const isXPost =
+    original.platform === 'x' &&
+    (original.kind === 'short_post' || original.kind === 'image_post')
+  const translationPrompt = isXPost
+    ? '05-AIHOT-X帖子翻译.md'
+    : promptNames.translate
   let metadata: SingleTableModelResponse | undefined
   try {
     const translated = await translateDocument({
@@ -647,7 +953,7 @@ export async function translateSingleTableContent(
         options.repository.dataRoot,
         'translation-work'
       ),
-      promptVersion: '5',
+      promptVersion: `${isXPost ? 7 : 6}:${translationPrompt}`,
       onPlan(total) {
         options.repository.beginTranslation(row.id, total)
       },
@@ -664,7 +970,7 @@ export async function translateSingleTableContent(
               index === 0 ? (original.originalTitle ?? '无') : '无',
             content_kind: original.kind,
             source_format: original.format,
-            english_body: body,
+            english_body: isXPost ? readablePostText(body) : body,
             translation_chunk_position: `${index + 1}/${count}`,
             previous_translation_tail: previousTranslationTail || '无',
           },
@@ -672,7 +978,8 @@ export async function translateSingleTableContent(
           Math.min(
             capacity.maxOutputTokens,
             Math.max(2_000, Buffer.byteLength(body, 'utf8') + 1_000)
-          )
+          ),
+          translationPrompt
         )
         metadata = translationCall.metadata
         return translationCall.value
@@ -682,7 +989,7 @@ export async function translateSingleTableContent(
       row.id,
       translated.chineseBody,
       translated.chineseTitle,
-      options.translationMinimumTotalScore,
+      0,
       {
         provider: metadata?.provider ?? capacity.provider,
         model: metadata?.model ?? capacity.model,

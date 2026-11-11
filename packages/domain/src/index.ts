@@ -166,3 +166,5 @@ export type ParameterVersion = z.infer<typeof parameterVersionSchema>
 export type Provider = z.infer<typeof providerSchema>
 export type SourceType = z.infer<typeof sourceTypeSchema>
 export type ContentKind = z.infer<typeof contentKindSchema>
+
+export * from './content-tags.js'

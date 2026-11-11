@@ -284,6 +284,7 @@ export function createSingleTableSourceProvider(
             interaction: item.interaction,
             kind: item.content.kind,
             videoDurationSeconds: item.video?.durationSeconds,
+            videoScope: item.video?.scope,
             opaque: item,
           }
         })
@@ -461,6 +462,7 @@ export function createSingleTableSourceProvider(
           kind: item.content.kind,
           format: item.content.kind === 'article' ? 'plain_text' : 'plain_text',
           videoDurationSeconds: item.video?.durationSeconds,
+          videoScope: item.video?.scope,
           opaque: item,
         }
       })
@@ -480,6 +482,7 @@ export function createSingleTableSourceProvider(
       }
     },
     async resolve(source: ConfiguredSource, item: DiscoveredContent) {
+      let language = source.language
       const calls: Array<{ request: unknown; response: unknown }> = []
       const trackedFetch = auditFetch(
         fetcher,
@@ -581,19 +584,14 @@ export function createSingleTableSourceProvider(
                   `captions are ${captions.status}; manual transcription required`
                 )
               body = captions.text
+              if (captions.languageCode)
+                language = /^zh(?:-|$)/iu.test(captions.languageCode)
+                  ? 'zh'
+                  : 'en'
               break
             } catch (error) {
               errors.push(
                 `${id}: ${error instanceof Error ? error.message : String(error)}`
-              )
-            }
-          }
-          if (!body && options.xVideoTranscriber && url) {
-            try {
-              body = await options.xVideoTranscriber(url)
-            } catch (error) {
-              errors.push(
-                `local-transcription: ${error instanceof Error ? error.message : String(error)}`
               )
             }
           }
@@ -609,7 +607,12 @@ export function createSingleTableSourceProvider(
             .filter(Boolean)
             .join('\n\n') || body
       }
-      if (!body) throw new Error('No complete original content')
+      const allowEmptyPost =
+        source.platform === 'x' &&
+        (item.kind === 'short_post' || item.kind === 'image_post') &&
+        Boolean(sourceItem?.images?.length || url)
+      if (!body && !allowEmptyPost)
+        throw new Error('No complete original content')
       return {
         original: {
           platform: source.platform,
@@ -618,16 +621,18 @@ export function createSingleTableSourceProvider(
           sourceAccountName: accountName(source),
           externalContentId: item.externalId,
           canonicalUrl: url,
-          title: title || body.slice(0, 80),
+          title: title || body.slice(0, 80) || url || item.externalId,
           originalTitle:
             item.kind === 'short_post' ? undefined : title || undefined,
           body,
+          images: sourceItem?.images,
+          quotedPost: sourceItem?.quotedPost,
           explicitLong: Boolean(
             sourceItem?.thread && sourceItem.thread.parts.length > 1
           ),
           kind: item.kind,
           format,
-          language: source.language,
+          language,
           videoDurationSeconds: item.videoDurationSeconds,
           publishedAt: item.publishedAt,
         },

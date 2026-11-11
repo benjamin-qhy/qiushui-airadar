@@ -17,10 +17,11 @@ import {
   saveSourceState,
   sourcesConfigSchema,
   providerRoutesSchema,
-  saveTranslationThreshold,
   saveCollectionConcurrency,
   saveTwitterVideoPolicy,
   collectionConcurrencySchema,
+  scoreRangesSchema,
+  saveScoreRanges,
   updateFileSecret,
   type SingleTableConfig,
 } from '@qiushui-airadar/config'
@@ -34,6 +35,7 @@ import {
 } from '@qiushui-airadar/source-adapters'
 import {
   createReadOnlyCodexCredentialStore,
+  createApplicationModels,
   createFileModelCredentialStore,
   createProviderLoginManager,
   createSingleTableModelGateway,
@@ -341,7 +343,8 @@ async function applyUnprocessedPolicies(
 async function feedItem(
   repository: SingleTableRepository,
   row: ContentRow,
-  sources: SingleTableConfig['sources']['sources']
+  sources: SingleTableConfig['sources']['sources'],
+  listPreview = false
 ) {
   const source = sources.find(
     (candidate) => candidate.id === row.source_account_id
@@ -354,11 +357,17 @@ async function feedItem(
         : []
     })
   )
+  const needsBody =
+    !listPreview ||
+    ((row.content_kind === 'short_post' || row.content_kind === 'image_post') &&
+      !JSON.parse(String(row.analysis_extra_json || '{}')).postMode)
   const chinese =
-    row.original_language === 'zh' || row.translated_to_chinese
+    (needsBody && row.original_language === 'zh') || row.translated_to_chinese
       ? await repository.readBody(row.id, 'zh')
       : undefined
-  const english = await repository.readBody(row.id, 'en')
+  const english = needsBody
+    ? await repository.readBody(row.id, 'en')
+    : undefined
   return {
     id: row.id,
     title: row.title,
@@ -374,20 +383,30 @@ async function feedItem(
     lastError: row.last_error,
     lastProcessedAt: row.last_processed_at,
     analyzedAt: row.analyzed_at,
-    body: english ?? chinese ?? '',
+    body: listPreview
+      ? (english ?? chinese ?? '').slice(0, 1200)
+      : (english ?? chinese ?? ''),
     hasEnglishBody: Boolean(english),
+    postMode: JSON.parse(String(row.analysis_extra_json || '{}')).postMode,
+    editorialJudgment: JSON.parse(String(row.analysis_extra_json || '{}'))
+      .editorialJudgment,
     summary: row.summary ?? '',
     keywordsText: row.keywords_text,
     valueSummary: row.value_summary ?? undefined,
     originalLanguage: row.original_language,
-    chineseTranslation: row.original_language === 'en' ? chinese : undefined,
+    chineseTranslation:
+      row.original_language === 'en'
+        ? listPreview
+          ? chinese?.slice(0, 1200)
+          : chinese
+        : undefined,
     translatedToChinese: Boolean(row.translated_to_chinese),
     translationStatus: row.translation_status,
     translationSkipReason: row.translation_skip_reason ?? undefined,
     translationError: row.translation_error ?? undefined,
     translationChunkCount: row.translation_chunk_count,
     translationCompletedChunks: row.translation_completed_chunks,
-    topics: arrayValue(row.keywords_json),
+    topics: row.is_junk ? [] : arrayValue(row.content_tags_json),
     scores,
     totalScore: row.total_score,
     recommendation: row.recommendation,
@@ -562,6 +581,24 @@ export function createSingleTableServiceApp(options: {
   const pendingCredentialStore = createFileModelCredentialStore(
     path.join(options.dataRoot, 'model-pending-auth.json')
   )
+  const readSecret = async (name: string) => {
+    try {
+      return await createFileSecretReader(secretFile).get(name)
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined
+      throw error
+    }
+  }
+  const ollamaProviderConfig = async () => {
+    const [baseUrl, modelId, modelName] = await Promise.all([
+      readSecret('OLLAMA_BASE_URL'),
+      readSecret('OLLAMA_MODEL_ID'),
+      readSecret('OLLAMA_MODEL_NAME'),
+    ])
+    return baseUrl && modelId && modelName
+      ? { baseUrl, modelId, modelName }
+      : undefined
+  }
   const logins = createProviderLoginManager(credentialStore)
   const pendingLogins = createProviderLoginManager(pendingCredentialStore)
   const verificationFile = path.join(
@@ -592,10 +629,29 @@ export function createSingleTableServiceApp(options: {
     await writeFile(temporary, JSON.stringify(state), { mode: 0o600 })
     await rename(temporary, verificationFile)
   }
-  const testModel = (providerId: string, modelId: string, pending = false) =>
-    options.modelConnectionTest
-      ? options.modelConnectionTest(providerId, modelId)
-      : (pending ? pendingLogins : logins).test(providerId, modelId)
+  const testModel = async (
+    providerId: string,
+    modelId: string,
+    pending = false
+  ) => {
+    if (options.modelConnectionTest)
+      return options.modelConnectionTest(providerId, modelId)
+    if (providerId !== 'ollama')
+      return (pending ? pendingLogins : logins).test(providerId, modelId)
+    const store = pending ? pendingCredentialStore : credentialStore
+    const manager = createProviderLoginManager(
+      store,
+      createApplicationModels({
+        credentials: store,
+        ollama: await ollamaProviderConfig(),
+      })
+    )
+    try {
+      return await manager.test(providerId, modelId)
+    } finally {
+      manager.stop()
+    }
+  }
   const validateRoutes = async (
     routes: Array<{ provider: string; model: string }>
   ) => {
@@ -606,7 +662,10 @@ export function createSingleTableServiceApp(options: {
             other.provider === item.provider && other.model === item.model
         ) === index
     )) {
-      if (!(await credentialStore.read(route.provider)))
+      if (
+        route.provider !== 'ollama' &&
+        !(await credentialStore.read(route.provider))
+      )
         throw new Error(`${route.provider} 尚未通过连接测试。`)
       try {
         await testModel(route.provider, route.model)
@@ -635,14 +694,6 @@ export function createSingleTableServiceApp(options: {
       ),
     ]
   }
-  const readSecret = async (name: string) => {
-    try {
-      return await createFileSecretReader(secretFile).get(name)
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined
-      throw error
-    }
-  }
   const codexProviderStatus = async () => {
     const defaultAuthPath = path.join(homedir(), '.codex', 'auth.json')
     const configuredAuthPath = await readSecret('CODEX_AUTH_PATH')
@@ -658,6 +709,7 @@ export function createSingleTableServiceApp(options: {
       config.analysis.model.provider
     )
     const codex = await codexProviderStatus()
+    const ollama = await ollamaProviderConfig()
     const credentials = new Map(
       (await credentialStore.list()).map((credential) => [
         credential.providerId,
@@ -672,12 +724,17 @@ export function createSingleTableServiceApp(options: {
     )
     const verified = await verifiedModels()
     return Promise.all(
-      listSingleTableModelProviders().map(async (provider) => ({
+      listSingleTableModelProviders(ollama).map(async (provider) => ({
         ...provider,
         active: provider.id === activeProvider,
-        configured: credentials.has(provider.id),
+        configured:
+          provider.id === 'ollama'
+            ? Boolean(ollama)
+            : credentials.has(provider.id),
         verified:
-          credentials.has(provider.id) &&
+          (provider.id === 'ollama'
+            ? Boolean(ollama)
+            : credentials.has(provider.id)) &&
           Boolean(verified[provider.id]?.length),
         pending: pendingCredentials.has(provider.id),
         credentialType: credentials.get(provider.id),
@@ -687,7 +744,14 @@ export function createSingleTableServiceApp(options: {
               authPath: codex.authPath,
               usesDefaultPath: codex.usesDefaultPath,
             }
-          : { authLabel: 'API Key' }),
+          : provider.id === 'ollama'
+            ? {
+                authLabel: '无需密钥，通过 Pi 连接 Ollama',
+                baseUrl: ollama?.baseUrl ?? '',
+                modelId: ollama?.modelId ?? '',
+                modelName: ollama?.modelName ?? '',
+              }
+            : { authLabel: 'API Key' }),
       }))
     )
   }
@@ -942,27 +1006,28 @@ export function createSingleTableServiceApp(options: {
             (url.pathname === '/api/contents' || url.pathname === '/api/daily')
           ) {
             const config = await loadSingleTableConfig(options.configRoot)
-            const rows = (
+            const rows =
               url.searchParams.get('scope') === 'unprocessed'
                 ? activeRepository.unprocessedRows(
                     url.searchParams.get('keyword') ?? undefined
                   )
                 : activeRepository.search({
+                    tag: url.searchParams.get('tag') ?? undefined,
                     isUnprocessed: false,
                     keyword: url.searchParams.get('keyword') ?? undefined,
                     isJunk: url.pathname === '/api/daily' ? false : undefined,
-                    limit: 500,
+                    attentionOrder:
+                      url.searchParams.get('sort') === 'score-desc' ||
+                      url.pathname === '/api/daily',
+                    daily:
+                      url.searchParams.get('scope') === 'daily' ||
+                      url.pathname === '/api/daily',
+                    allRows: true,
                   })
-            ).filter(
-              (row) =>
-                url.pathname !== '/api/daily' ||
-                (row.process_status === 'completed' &&
-                  row.recommendation !== 'none')
-            )
             return send(response, 200, {
               items: await Promise.all(
                 rows.map((row) =>
-                  feedItem(activeRepository, row, config.sources.sources)
+                  feedItem(activeRepository, row, config.sources.sources, true)
                 )
               ),
             })
@@ -1044,6 +1109,7 @@ export function createSingleTableServiceApp(options: {
           }
           if (method === 'GET' && url.pathname === '/api/models') {
             const config = await loadSingleTableConfig(options.configRoot)
+            const ollama = await ollamaProviderConfig()
             const provider = normalizeSingleTableProviderId(
               url.searchParams.get('provider') ?? config.analysis.model.provider
             )
@@ -1054,11 +1120,11 @@ export function createSingleTableServiceApp(options: {
               provider,
               defaultModel: config.analysis.model.default,
               stages: config.analysis.model.stages,
-              availableModels: listSingleTableModels(provider),
+              availableModels: listSingleTableModels(provider, ollama),
               availableModelGroups: configuredProviders.map((item) => ({
                 providerId: item.id,
                 providerName: item.name,
-                models: listSingleTableModels(item.id),
+                models: listSingleTableModels(item.id, ollama),
               })),
             })
           }
@@ -1226,10 +1292,11 @@ export function createSingleTableServiceApp(options: {
             url.pathname === '/api/collection/translation-policy' &&
             method === 'GET'
           ) {
+            return send(response, 200, { minimumScore: 0 })
+          }
+          if (method === 'GET' && url.pathname === '/api/config/score-ranges') {
             const config = await loadSingleTableConfig(options.configRoot)
-            return send(response, 200, {
-              minimumScore: config.analysis.translation.minimum_total_score,
-            })
+            return send(response, 200, { ranges: config.runtime.score_ranges })
           }
           if (method === 'GET' && url.pathname === '/api/config') {
             const files = await Promise.all(
@@ -1257,6 +1324,21 @@ export function createSingleTableServiceApp(options: {
               !request.headers['content-type']?.startsWith('application/json')
             )
               return send(response, 415, { error: 'json_required' })
+            if (
+              url.pathname === '/api/config/score-ranges' &&
+              method === 'PUT'
+            ) {
+              const input = scoreRangesSchema.safeParse(
+                (await bodyOf(request)).ranges
+              )
+              if (!input.success)
+                return send(response, 400, {
+                  message:
+                    '区间须为 0–100 的整数，最低分不能大于最高分，区间不能重复或重叠。',
+                })
+              await saveScoreRanges(options.configRoot, input.data)
+              return send(response, 200, { ranges: input.data })
+            }
             if (
               [
                 '/api/collection/twitter-video-policy',
@@ -1315,18 +1397,10 @@ export function createSingleTableServiceApp(options: {
             ) {
               const input = await bodyOf(request)
               const minimumScore = input.minimumScore
-              if (
-                !Number.isInteger(minimumScore) ||
-                Number(minimumScore) < 0 ||
-                Number(minimumScore) > 100
-              )
+              if (minimumScore !== 0)
                 return send(response, 400, {
-                  message: '翻译分数须为0至100之间的整数。',
+                  message: '所有符合条件的英文内容都会自动翻译。',
                 })
-              await saveTranslationThreshold(
-                options.configRoot,
-                Number(minimumScore)
-              )
               return send(response, 200, { minimumScore })
             }
             if (method === 'PUT' && url.pathname === '/api/transcription') {
@@ -1453,11 +1527,12 @@ export function createSingleTableServiceApp(options: {
                   typeof route === 'string' ? { provider, model: route } : route
                 ),
               ]
+              const ollama = await ollamaProviderConfig()
               if (
                 !defaultModel ||
                 routes.some(
                   (route) =>
-                    !listSingleTableModels(route.provider).some(
+                    !listSingleTableModels(route.provider, ollama).some(
                       (model) => model.id === route.model
                     )
                 )
@@ -1488,15 +1563,61 @@ export function createSingleTableServiceApp(options: {
               /^\/api\/model-providers\/([^/]+)$/u.exec(url.pathname)
             if (method === 'PUT' && modelProviderMutation) {
               const providerId = decodeURIComponent(modelProviderMutation[1]!)
-              const definition = listSingleTableModelProviders().find(
-                (provider) => provider.id === providerId
-              )
+              const definition = listSingleTableModelProviders(
+                await ollamaProviderConfig()
+              ).find((provider) => provider.id === providerId)
               if (!definition)
                 return send(response, 404, {
                   error: 'model_provider_not_found',
                 })
               const body = await bodyOf(request)
-              if (providerId === 'openai-codex') {
+              if (providerId === 'ollama') {
+                const baseUrlValue =
+                  typeof body.baseUrl === 'string' ? body.baseUrl.trim() : ''
+                const modelId =
+                  typeof body.modelId === 'string' ? body.modelId.trim() : ''
+                const modelName =
+                  typeof body.modelName === 'string'
+                    ? body.modelName.trim()
+                    : ''
+                let baseUrl: URL
+                try {
+                  baseUrl = new URL(baseUrlValue)
+                } catch {
+                  return send(response, 400, {
+                    error: 'invalid_ollama_url',
+                    message: '请输入完整的 Ollama 服务地址。',
+                  })
+                }
+                if (
+                  !['http:', 'https:'].includes(baseUrl.protocol) ||
+                  baseUrl.username ||
+                  baseUrl.password ||
+                  baseUrl.search ||
+                  baseUrl.hash ||
+                  !modelId ||
+                  !modelName
+                )
+                  return send(response, 400, {
+                    error: 'invalid_ollama_config',
+                    message: '请填写有效的服务地址、模型 ID 和模型名称。',
+                  })
+                const endpointSuffix = /\/(?:api\/chat|v1)\/*$/u
+                baseUrl.pathname =
+                  baseUrl.pathname.replace(endpointSuffix, '') || '/'
+                const normalizedBaseUrl = baseUrl.href.replace(/\/+$/u, '')
+                await updateFileSecret(
+                  secretFile,
+                  'OLLAMA_BASE_URL',
+                  normalizedBaseUrl
+                )
+                await updateFileSecret(secretFile, 'OLLAMA_MODEL_ID', modelId)
+                await updateFileSecret(
+                  secretFile,
+                  'OLLAMA_MODEL_NAME',
+                  modelName
+                )
+              } else if (providerId === 'openai-codex') {
                 const useDefaultPath = body.useDefaultPath === true
                 const requestedPath =
                   typeof body.authPath === 'string' ? body.authPath.trim() : ''
@@ -1575,15 +1696,25 @@ export function createSingleTableServiceApp(options: {
             if (method === 'DELETE' && modelProviderDelete) {
               const providerId = decodeURIComponent(modelProviderDelete[1]!)
               if (
-                !listSingleTableModelProviders().some(
-                  (provider) => provider.id === providerId
-                )
+                !listSingleTableModelProviders(
+                  await ollamaProviderConfig()
+                ).some((provider) => provider.id === providerId)
               )
                 return send(response, 404, {
                   error: 'model_provider_not_found',
                 })
-              await credentialStore.delete(providerId)
-              await pendingCredentialStore.delete(providerId)
+              if (providerId === 'ollama') {
+                await updateFileSecret(secretFile, 'OLLAMA_BASE_URL', undefined)
+                await updateFileSecret(secretFile, 'OLLAMA_MODEL_ID', undefined)
+                await updateFileSecret(
+                  secretFile,
+                  'OLLAMA_MODEL_NAME',
+                  undefined
+                )
+              } else {
+                await credentialStore.delete(providerId)
+                await pendingCredentialStore.delete(providerId)
+              }
               return send(response, 200, {
                 deleted: providerId,
                 providers: await modelProviders(),
@@ -1607,7 +1738,10 @@ export function createSingleTableServiceApp(options: {
                   message: `${provider.name} 凭据尚未配置。`,
                 })
               const config = await loadSingleTableConfig(options.configRoot)
-              const availableModels = listSingleTableModels(providerId)
+              const availableModels = listSingleTableModels(
+                providerId,
+                await ollamaProviderConfig()
+              )
               const requestedModel =
                 typeof body.modelId === 'string' ? body.modelId.trim() : ''
               const modelId =
@@ -1995,7 +2129,8 @@ export function createSingleTableServiceApp(options: {
                 createSingleTableModelGateway(
                   credentialStore,
                   config.analysis.model.provider,
-                  config.analysis.model
+                  config.analysis.model,
+                  await ollamaProviderConfig()
                 )
               const original: import('@qiushui-airadar/runtime').OriginalContent =
                 {
@@ -2223,6 +2358,10 @@ export function createSingleTableServiceApp(options: {
                     canonicalUrl: row.canonical_url as string | undefined,
                     title: row.title,
                     originalTitle: row.original_title ?? undefined,
+                    images: JSON.parse(String(row.images_json || '[]')),
+                    quotedPost: row.quoted_post_json
+                      ? JSON.parse(String(row.quoted_post_json))
+                      : undefined,
                     body: originalBody,
                     kind: row.content_kind,
                     format:
@@ -2310,7 +2449,8 @@ export function createSingleTableServiceApp(options: {
                   createSingleTableModelGateway(
                     credentialStore,
                     config.analysis.model.provider,
-                    config.analysis.model
+                    config.analysis.model,
+                    await ollamaProviderConfig()
                   )
                 const completed = await processSingleTableContent({
                   repository: activeRepository,
@@ -2354,6 +2494,20 @@ export function createSingleTableServiceApp(options: {
                   ),
                 })
               } catch (error) {
+                if (
+                  resolvedForRetry &&
+                  activeRepository.getById(id)?.process_status === 'processing'
+                ) {
+                  activeRepository.fail(id, 'processing', error)
+                  await activeRepository.appendLog(id, {
+                    action: 'manual-retry',
+                    stage: 'failed',
+                    status: 'failed',
+                    trigger: 'manual-retry',
+                    error:
+                      error instanceof Error ? error.message : String(error),
+                  })
+                }
                 if (!resolvedForRetry) {
                   const excludedReason = classifyUnprocessedContent({
                     platform: String(row.source_platform),

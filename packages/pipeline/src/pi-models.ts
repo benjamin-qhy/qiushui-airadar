@@ -1,5 +1,62 @@
 import { builtinModels } from '@earendil-works/pi-ai/providers/all'
-import type { Api, Model } from '@earendil-works/pi-ai'
+import { createProvider, type Api, type Model } from '@earendil-works/pi-ai'
+import { openAICompletionsApi } from '@earendil-works/pi-ai/api/openai-completions.lazy'
+
+export interface OllamaProviderConfig {
+  baseUrl: string
+  modelId: string
+  modelName: string
+}
+
+function ollamaProvider(config?: OllamaProviderConfig) {
+  const baseUrl = config ? `${config.baseUrl.replace(/\/+$/u, '')}/v1` : ''
+  const models: Model<'openai-completions'>[] = config
+    ? [
+        {
+          id: config.modelId,
+          name: config.modelName,
+          api: 'openai-completions',
+          baseUrl,
+          provider: 'ollama',
+          reasoning: false,
+          input: ['text'],
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+          contextWindow: 131_072,
+          maxTokens: 32_768,
+          compat: {
+            supportsStore: false,
+            supportsDeveloperRole: false,
+            maxTokensField: 'max_tokens',
+          },
+        },
+      ]
+    : []
+  return createProvider({
+    id: 'ollama',
+    name: 'Ollama',
+    ...(baseUrl ? { baseUrl } : {}),
+    auth: {
+      apiKey: {
+        name: '无需密钥',
+        async check({ signal }) {
+          signal.throwIfAborted()
+          return { type: 'api_key', source: 'Ollama 局域网服务' }
+        },
+        async resolve({ signal }) {
+          signal.throwIfAborted()
+          // Pi's OpenAI-compatible transport requires a non-empty key. Ollama
+          // ignores this local placeholder and performs no authentication.
+          return {
+            auth: { apiKey: 'ollama-local' },
+            source: 'Ollama 局域网服务',
+          }
+        },
+      },
+    },
+    models,
+    api: openAICompletionsApi(),
+  })
+}
 
 // Preserve saved model routes removed from pi's catalog during the 0.85.1 → 1.4.0 upgrade.
 // Keep their original IDs and request metadata; never silently substitute a model.
@@ -186,9 +243,13 @@ const legacyModels: Model<Api>[] = [
 ]
 
 export function createApplicationModels(
-  options?: Parameters<typeof builtinModels>[0]
+  options?: Parameters<typeof builtinModels>[0] & {
+    ollama?: OllamaProviderConfig
+  }
 ) {
-  const models = builtinModels(options)
+  const { ollama, ...modelOptions } = options ?? {}
+  const models = builtinModels(modelOptions)
+  models.setProvider(ollamaProvider(ollama))
   for (const providerId of new Set(
     legacyModels.map((model) => model.provider)
   )) {

@@ -84,9 +84,23 @@ async function fixture(
   const calls: Array<{ stage: string; user: string }> = []
   const gateway: SingleTableModelGateway = {
     async complete(input) {
-      calls.push({ stage: input.stage, user: input.user })
+      const stage = input.user.startsWith('请按系统规则理解')
+        ? 'summarize'
+        : input.user.includes('主推文内容：')
+          ? 'post'
+          : input.stage
+      calls.push({ stage, user: input.user })
       return {
-        text: outputs[input.stage]!,
+        text:
+          stage === 'summarize'
+            ? JSON.stringify({
+                titleZh: '编辑标题',
+                summaryZh: 'AIHOT 摘要',
+                editorialJudgment: '推荐理由',
+              })
+            : stage === 'post'
+              ? 'title_zh: 中文标题\nbody_zh: 帖子正文'
+              : outputs[input.stage]!,
         provider: 'mock',
         model: 'mock',
         durationMs: 1,
@@ -117,15 +131,7 @@ afterEach(async () => {
   )
 })
 
-const score = JSON.stringify({
-  valueSummary: '能学习一套可复用的工作流。',
-  scores: {
-    interestFit: { level: 5, reason: '相关' },
-    concreteGain: { level: 4, reason: '可复用' },
-    substance: { level: 4, reason: '有步骤' },
-    newInformation: { level: 3, reason: '有新信息' },
-  },
-})
+const score = JSON.stringify({ attentionScore: 80 })
 
 describe('single-table AI flow', () => {
   it('persists provider credentials without exposing secrets from list', async () => {
@@ -176,7 +182,7 @@ describe('single-table AI flow', () => {
   it('calls only classification for junk content', async () => {
     const { result, calls } = await fixture({
       classify:
-        '---\nkeywords: ["广告"]\nspam:\n  isJunk: true\n  reason: "纯广告"\n---',
+        '---\ncategory: null\nthemes: []\nkeywords: ["广告"]\nspam:\n  isJunk: true\n  reason: "纯广告"\n---',
     })
     expect(calls.map((call) => call.stage)).toEqual(['classify'])
     expect(result.total_score).toBeNull()
@@ -187,7 +193,7 @@ describe('single-table AI flow', () => {
     const { calls } = await fixture(
       {
         classify:
-          '---\nkeywords: ["广告"]\nspam:\n  isJunk: true\n  reason: "纯广告"\n---',
+          '---\ncategory: null\nthemes: []\nkeywords: ["广告"]\nspam:\n  isJunk: true\n  reason: "纯广告"\n---',
       },
       60,
       original,
@@ -200,7 +206,7 @@ describe('single-table AI flow', () => {
     const { result, calls } = await fixture(
       {
         classify:
-          '---\nkeywords: []\nspam:\n  isJunk: true\n  reason: "纯广告"\n---',
+          '---\ncategory: null\nthemes: []\nkeywords: []\nspam:\n  isJunk: true\n  reason: "纯广告"\n---',
       },
       10,
       {
@@ -219,7 +225,7 @@ describe('single-table AI flow', () => {
   it('caps excess model keywords instead of failing classification', async () => {
     const { result } = await fixture({
       classify:
-        '---\nkeywords: ["a", "b", "c", "d", "e", "f"]\nspam:\n  isJunk: true\n  reason: "广告"\n---',
+        '---\ncategory: null\nthemes: []\nkeywords: ["a", "b", "c", "d", "e", "f"]\nspam:\n  isJunk: true\n  reason: "广告"\n---',
     })
     expect(JSON.parse(String(result.keywords_json))).toEqual([
       'a',
@@ -234,75 +240,45 @@ describe('single-table AI flow', () => {
     const { result } = await fixture(
       {
         classify:
-          '---\nkeywords: ["工作流"]\nspam:\n  isJunk: false\n  reason: null\n---',
+          '---\ncategory: 教程/实践\nthemes: []\nkeywords: ["工作流"]\nspam:\n  isJunk: false\n  reason: null\n---',
         score: `\`\`\`json\n${score}\n\`\`\``,
       },
-      100
+      100,
+      { ...original, language: 'zh' }
     )
     expect(result.process_status).toBe('completed')
+    expect(result).toMatchObject({
+      content_tags_json: '["教程/实践"]',
+    })
     expect(result.total_score).toBeGreaterThan(0)
   })
 
-  it('scores low-value English without translating', async () => {
-    const { result, calls } = await fixture(
-      {
-        classify:
-          '---\nkeywords: ["工作流"]\nspam:\n  isJunk: false\n  reason: null\n---',
-        score,
-      },
-      84
-    )
-    expect(calls.map((call) => call.stage)).toEqual(['classify', 'score'])
-    expect(calls[1]!.user).not.toContain('summary')
-    expect(result.summary).toBe(original.body)
-    expect(result.chinese_markdown_path).toBeNull()
-  })
-
-  it('translates at 10 points and skips English content below 10 points', async () => {
-    const classify =
-      '---\nkeywords: ["工作流"]\nspam:\n  isJunk: false\n  reason: null\n---'
-    const scoring = (interestFit: number) =>
-      JSON.stringify({
-        valueSummary: '提供基础参考。',
-        scores: {
-          interestFit: { level: interestFit, reason: '相关' },
-          concreteGain: { level: 1, reason: '少量收获' },
-          substance: { level: 1, reason: '内容较少' },
-          newInformation: { level: 1, reason: '信息较少' },
-        },
-      })
-    const untranslated = await fixture({ classify, score: scoring(1) }, 10)
-    expect(untranslated.result.total_score).toBe(0)
-    expect(untranslated.calls.map((call) => call.stage)).toEqual([
+  it('translates even a zero attention score without creating a reading recommendation', async () => {
+    const { calls, result } = await fixture({
+      classify:
+        '---\ncategory: 教程/实践\nthemes: []\nkeywords: [工作流]\nspam: {isJunk: false, reason: null}\n---',
+      score: '{"attentionScore":0}',
+      translate: '{"chineseTitle":null,"chineseBody":"这是一个工作流。"}',
+    })
+    expect(calls.map((call) => call.stage)).toEqual([
       'classify',
       'score',
-    ])
-
-    const translated = await fixture(
-      {
-        classify,
-        score: scoring(2),
-        translate: JSON.stringify({
-          chineseTitle: '中文标题',
-          chineseBody: '中文意译内容。',
-        }),
-      },
-      10,
-      { ...original, externalContentId: 'threshold-10' }
-    )
-    expect(translated.result.total_score).toBe(10)
-    expect(translated.result.translated_to_chinese).toBe(1)
-    expect(translated.calls.map((call) => call.stage)).toEqual([
-      'classify',
-      'score',
+      'post',
       'translate',
     ])
+    expect(result).toMatchObject({
+      total_score: 0,
+      analysis_rule_version: 'aihot-41cee09',
+      recommendation: 'none',
+      value_summary: null,
+      translated_to_chinese: 1,
+    })
   })
 
   it('skips automatic video translation when duration or equivalent characters reach half an hour', async () => {
     const outputs = {
       classify:
-        '---\nkeywords: ["视频"]\nspam:\n  isJunk: false\n  reason: null\n---\n\n视频总结。',
+        '---\ncategory: 教程/实践\nthemes: []\nkeywords: ["视频"]\nspam:\n  isJunk: false\n  reason: null\n---\n\n视频总结。',
       score,
     }
     const duration = await fixture(outputs, 10, {
@@ -315,6 +291,7 @@ describe('single-table AI flow', () => {
     })
     expect(duration.calls.map((call) => call.stage)).toEqual([
       'classify',
+      'summarize',
       'score',
     ])
     expect(duration.result.translation_status).toBe('skipped')
@@ -330,6 +307,7 @@ describe('single-table AI flow', () => {
     })
     expect(characters.calls.map((call) => call.stage)).toEqual([
       'classify',
+      'summarize',
       'score',
     ])
     expect(characters.result.translation_skip_reason).toBe(
@@ -341,8 +319,8 @@ describe('single-table AI flow', () => {
     const { result, calls } = await fixture(
       {
         classify:
-          '---\nkeywords: ["智能体", "工作流"]\nspam:\n  isJunk: false\n  reason: null\n---',
-        score,
+          '---\ncategory: 教程/实践\nthemes: []\nkeywords: ["智能体", "工作流"]\nspam:\n  isJunk: false\n  reason: null\n---',
+        score: '{"attentionScore":50}',
       },
       60,
       {
@@ -357,10 +335,10 @@ describe('single-table AI flow', () => {
     expect(result.english_markdown_path).toBeNull()
   })
 
-  it('makes three calls and replaces English short summary after translation', async () => {
+  it('keeps high-attention post summary and title after full translation', async () => {
     const { result, calls } = await fixture({
       classify:
-        '---\nkeywords: ["工作流"]\nspam:\n  isJunk: false\n  reason: null\n---',
+        '---\ncategory: 教程/实践\nthemes: []\nkeywords: ["工作流"]\nspam:\n  isJunk: false\n  reason: null\n---',
       score,
       translate: JSON.stringify({
         chineseTitle: '中文标题',
@@ -370,13 +348,16 @@ describe('single-table AI flow', () => {
     expect(calls.map((call) => call.stage)).toEqual([
       'classify',
       'score',
+      'summarize',
       'translate',
     ])
-    expect(result.summary).toBe('一套实用的 AI 工作流。')
+    expect(calls.at(-1)?.user).toContain('当前 X 帖子片段')
+    expect(result.summary).toBe('AIHOT 摘要')
+    expect(result.title).toBe('编辑标题')
     expect(result.chinese_markdown_path).toContain('中文.md')
   })
 
-  it('keeps first-call Chinese Markdown summary for an English article', async () => {
+  it('keeps AIHOT Chinese summary for an English article', async () => {
     const article = {
       ...original,
       kind: 'article' as const,
@@ -387,7 +368,7 @@ describe('single-table AI flow', () => {
     const { result, calls } = await fixture(
       {
         classify:
-          '---\nkeywords: ["工作流"]\nspam:\n  isJunk: false\n  reason: null\n---\n\n## 中文总结\n\n实用做法。',
+          '---\ncategory: 教程/实践\nthemes: []\nkeywords: ["工作流"]\nspam:\n  isJunk: false\n  reason: null\n---\n\n## 中文总结\n\n实用做法。',
         score,
         translate: JSON.stringify({
           chineseTitle: '中文标题',
@@ -399,10 +380,53 @@ describe('single-table AI flow', () => {
     )
     expect(calls.map((call) => call.stage)).toEqual([
       'classify',
+      'summarize',
       'score',
       'translate',
     ])
-    expect(result.summary).toBe('## 中文总结\n\n实用做法。')
-    expect(calls[1]!.user).not.toContain('实用做法')
+    expect(calls.at(-1)?.user).toContain('当前英文片段')
+    expect(result.summary).toBe('AIHOT 摘要')
+    expect(calls[2]!.user).not.toContain('实用做法')
   })
 })
+
+it.each([
+  [60, 1799, 'en', 'below_score_threshold'],
+  [61, 1800, 'en', 'video_duration_limit'],
+  [61, undefined, 'en', 'video_duration_unknown'],
+  [61, 1799, 'en', null],
+  [90, 1799, 'zh', null],
+] as const)(
+  'applies YouTube translation boundaries: score=%s duration=%s language=%s',
+  async (points, duration, language, reason) => {
+    const { result, calls } = await fixture(
+      {
+        classify:
+          '---\ncategory: 教程/实践\nthemes: []\nkeywords: [视频]\nspam: {isJunk: false, reason: null}\n---',
+        score: JSON.stringify({ attentionScore: points }),
+        translate: JSON.stringify({
+          chineseTitle: '标题',
+          chineseBody: '这是完整的视频字幕翻译。',
+        }),
+      },
+      0,
+      {
+        ...original,
+        platform: 'youtube',
+        sourceType: 'youtube',
+        externalContentId: 'boundary',
+        kind: 'video',
+        format: 'subtitle',
+        body: 'A short video transcript.',
+        language,
+        videoDurationSeconds: duration,
+      }
+    )
+    expect(result.summary).toBe('AIHOT 摘要')
+    expect(calls.some((call) => call.stage === 'summarize')).toBe(true)
+    expect(calls.some((call) => call.stage === 'translate')).toBe(
+      language === 'en' && reason === null
+    )
+    if (reason) expect(result.translation_skip_reason).toBe(reason)
+  }
+)

@@ -42,6 +42,8 @@ export interface OriginalContent {
   title: string
   originalTitle?: string
   body: string
+  images?: Array<{ order: number; url: string }>
+  quotedPost?: { text: string; authorHandle?: string; url: string }
   explicitLong?: boolean
   kind: 'short_post' | 'video' | 'image_post' | 'article'
   format: 'plain_text' | 'markdown_article' | 'subtitle'
@@ -90,7 +92,11 @@ export interface ContentRow {
   content_kind: OriginalContent['kind']
   original_language: 'zh' | 'en' | 'unknown'
   summary: string | null
+  content_tags_json: string
   keywords_text: string
+  public_reason: string | null
+  business_reason: string | null
+  audience_status: string | null
   value_summary: string | null
   is_junk: number
   is_unprocessed: number
@@ -286,6 +292,28 @@ export function contentIdentity(input: OriginalContent): {
   value: string
   key: string
 } {
+  if (input.kind === 'video') {
+    let videoId =
+      input.platform === 'youtube' ? input.externalContentId : undefined
+    try {
+      const url = new URL(input.canonicalUrl ?? '')
+      if (/^(?:www\.|m\.)?youtube\.com$/iu.test(url.hostname))
+        videoId =
+          url.searchParams.get('v') ??
+          url.pathname.match(/^\/(?:shorts|live|embed)\/([^/]+)/u)?.[1] ??
+          videoId
+      else if (url.hostname === 'youtu.be')
+        videoId = url.pathname.slice(1).split('/')[0]
+    } catch {
+      /* A platform ID is sufficient when no URL is available. */
+    }
+    if (videoId)
+      return {
+        kind: 'source_content_id',
+        value: videoId,
+        key: `youtube:${videoId}`,
+      }
+  }
   if (input.kind === 'article') {
     if (!input.canonicalUrl) throw new Error('Article URL is required')
     const value = canonicalizeContentUrl(input.canonicalUrl)
@@ -453,6 +481,10 @@ export class SingleTableRepository {
         ).map((column) => column.name)
       )
       const migrations: Array<[string, string]> = [
+        ['content_tags_json', "TEXT NOT NULL DEFAULT '[]'"],
+        ['public_reason', 'TEXT'],
+        ['business_reason', 'TEXT'],
+        ['audience_status', 'TEXT'],
         ['is_unprocessed', 'INTEGER NOT NULL DEFAULT 0'],
         ['unprocessed_reason', 'TEXT'],
         ['translation_status', "TEXT NOT NULL DEFAULT 'not_applicable'"],
@@ -464,6 +496,11 @@ export class SingleTableRepository {
       for (const [name, definition] of migrations)
         if (!columns.has(name))
           database.exec(`ALTER TABLE contents ADD COLUMN ${name} ${definition}`)
+      if (!columns.has('content_tags_json')) {
+        database.exec(`UPDATE contents SET content_tags_json='["AI 落地"]'
+          WHERE is_junk=0 AND EXISTS (SELECT 1 FROM json_each(keywords_json)
+            WHERE replace(value, ' ', '') IN ('AI落地', '企业AI落地'))`)
+      }
       database.exec(
         `UPDATE contents SET translation_status = CASE
           WHEN translated_to_chinese = 1 THEN 'succeeded'
@@ -482,9 +519,39 @@ export class SingleTableRepository {
   }
 
   get(identityKey: string): ContentRow | undefined {
-    return this.database
+    const exact = this.database
       .prepare('SELECT * FROM contents WHERE identity_key = ?')
       .get(identityKey) as ContentRow | undefined
+    if (exact || !identityKey.startsWith('youtube:')) return exact
+    // Recognize historical source-scoped identities without rewriting existing records.
+    const videoId = identityKey.slice('youtube:'.length)
+    const legacy = this.database
+      .prepare(
+        `SELECT * FROM contents WHERE content_kind='video' AND
+       ((source_platform='youtube' AND external_content_id=?) OR
+        (instr(canonical_url, ?) > 0 AND (canonical_url LIKE '%youtube.com/%' OR canonical_url LIKE '%youtu.be/%')))
+       ORDER BY created_at`
+      )
+      .all(videoId, videoId) as unknown as ContentRow[]
+    return legacy.find(
+      (row) =>
+        contentIdentity({
+          platform: String(row.source_platform),
+          sourceType: String(row.source_type),
+          sourceAccountId: String(row.source_account_id),
+          sourceAccountName: String(row.source_account_name),
+          externalContentId:
+            typeof row.external_content_id === 'string'
+              ? row.external_content_id
+              : undefined,
+          canonicalUrl: row.canonical_url ?? undefined,
+          title: row.title,
+          body: '',
+          kind: row.content_kind,
+          format: row.original_format,
+          language: row.original_language === 'zh' ? 'zh' : 'en',
+        }).key === identityKey
+    )
   }
 
   getById(id: string): ContentRow | undefined {
@@ -590,7 +657,15 @@ export class SingleTableRepository {
   }
 
   async saveOriginal(input: OriginalContent): Promise<ContentRow> {
-    if (!input.body.trim()) throw new Error('Cannot save empty original body')
+    if (
+      !input.body.trim() &&
+      !(
+        input.platform === 'x' &&
+        (input.kind === 'short_post' || input.kind === 'image_post') &&
+        (input.canonicalUrl || input.images?.length)
+      )
+    )
+      throw new Error('Cannot save empty original body')
     const identity = contentIdentity(input)
     const existing = this.get(identity.key)
     const now = new Date().toISOString()
@@ -675,6 +750,14 @@ export class SingleTableRepository {
         )
     }
     const row = this.get(identity.key)!
+    if (input.images?.length)
+      this.database
+        .prepare('UPDATE contents SET images_json=? WHERE id=?')
+        .run(JSON.stringify(input.images), row.id)
+    if (input.quotedPost)
+      this.database
+        .prepare('UPDATE contents SET quoted_post_json=? WHERE id=?')
+        .run(JSON.stringify(input.quotedPost), row.id)
     try {
       await this.writeContent(row, input.body, input.language)
       if (!existing)
@@ -896,6 +979,7 @@ export class SingleTableRepository {
       original_title: row.original_title,
       summary: row.summary,
       keywords_text: row.keywords_text,
+      content_tags: JSON.parse(row.content_tags_json),
       value_summary: row.value_summary,
       is_unprocessed: Boolean(row.is_unprocessed),
       unprocessed_reason: row.unprocessed_reason,
@@ -1026,6 +1110,7 @@ export class SingleTableRepository {
     id: string,
     input: {
       keywords: string[]
+      tags?: string[]
       isJunk: boolean
       reason?: string
       summary?: string
@@ -1043,10 +1128,10 @@ export class SingleTableRepository {
       row.junk_source === 'manual' ? Boolean(row.is_junk) : input.isJunk
     this.database
       .prepare(
-        `UPDATE contents SET keywords_json=?, keywords_text=?, summary=COALESCE(?,summary),
+        `UPDATE contents SET content_tags_json=?, keywords_json=?, keywords_text=?, summary=COALESCE(?,summary),
       is_junk=?, junk_source=CASE WHEN junk_source='manual' THEN 'manual' ELSE 'ai' END,
       junk_reason=CASE WHEN junk_source='manual' THEN junk_reason ELSE ? END,
-      junk_updated_at=?, value_summary=CASE WHEN ?=1 THEN NULL ELSE value_summary END,
+      junk_updated_at=?, audience_status=CASE WHEN ?=1 THEN NULL ELSE audience_status END, public_reason=CASE WHEN ?=1 THEN NULL ELSE public_reason END, business_reason=CASE WHEN ?=1 THEN NULL ELSE business_reason END, value_summary=CASE WHEN ?=1 THEN NULL ELSE value_summary END,
       interest_fit_level=CASE WHEN ?=1 THEN NULL ELSE interest_fit_level END,
       interest_fit_reason=CASE WHEN ?=1 THEN NULL ELSE interest_fit_reason END,
       concrete_gain_level=CASE WHEN ?=1 THEN NULL ELSE concrete_gain_level END,
@@ -1060,13 +1145,14 @@ export class SingleTableRepository {
       process_status=?, processing_stage=?, updated_at=? WHERE id=?`
       )
       .run(
+        JSON.stringify(isJunk ? [] : (input.tags ?? [])),
         JSON.stringify(input.keywords),
         input.keywords.join(' '),
         input.summary ?? null,
         isJunk ? 1 : 0,
         input.reason ?? null,
         now,
-        ...Array(11).fill(isJunk ? 1 : 0),
+        ...Array(14).fill(isJunk ? 1 : 0),
         isJunk ? 'completed' : 'processing',
         isJunk ? 'completed' : 'scoring',
         now,
@@ -1092,6 +1178,11 @@ export class SingleTableRepository {
       promptVersion: string
       profileVersion: string
       durationMs: number
+      audience?: {
+        status: string
+        publicReason: string | null
+        businessReason: string | null
+      }
     }
   ): Promise<ContentRow> {
     const row = this.getById(id)
@@ -1102,7 +1193,7 @@ export class SingleTableRepository {
     const now = new Date().toISOString()
     this.database
       .prepare(
-        `UPDATE contents SET value_summary=?,
+        `UPDATE contents SET audience_status=?, public_reason=?, business_reason=?, value_summary=?,
       interest_fit_level=?, interest_fit_reason=?, concrete_gain_level=?, concrete_gain_reason=?,
       substance_level=?, substance_reason=?, new_information_level=?, new_information_reason=?,
       total_score=?, recommendation=?, scoring_rule_json=?, analyzed_at=?,
@@ -1111,6 +1202,9 @@ export class SingleTableRepository {
       process_status='completed', processing_stage='completed', last_processed_at=?, updated_at=? WHERE id=?`
       )
       .run(
+        metadata?.audience?.status ?? null,
+        metadata?.audience?.publicReason ?? null,
+        metadata?.audience?.businessReason ?? null,
         valueSummary,
         scores.interest_fit.level,
         scores.interest_fit.reason,
@@ -1133,6 +1227,59 @@ export class SingleTableRepository {
         now,
         id
       )
+    try {
+      await this.refreshFrontmatter(id)
+    } catch (error) {
+      await this.fileFailure(id, 'scoring', error)
+      throw error
+    }
+    return this.getById(id)!
+  }
+
+  async saveAttentionScore(
+    id: string,
+    score: number,
+    metadata: { provider: string; model: string; durationMs: number },
+    post?: { title: string; summary: string; mode: string; reason?: string }
+  ): Promise<ContentRow> {
+    if (!Number.isInteger(score) || score < 0 || score > 100)
+      throw new Error('Invalid attention score')
+    const now = new Date().toISOString()
+    const result = this.database
+      .prepare(
+        `UPDATE contents SET
+      title=COALESCE(?,title), chinese_title=COALESCE(?,chinese_title), summary=COALESCE(?,summary),
+      analysis_extra_json=json_patch(analysis_extra_json, ?),
+      total_score=?, recommendation='none', value_summary=NULL,
+      interest_fit_level=NULL, interest_fit_reason=NULL,
+      concrete_gain_level=NULL, concrete_gain_reason=NULL,
+      substance_level=NULL, substance_reason=NULL,
+      new_information_level=NULL, new_information_reason=NULL,
+      scoring_rule_json=NULL, analysis_profile_version_id=NULL,
+      analysis_rule_version='aihot-41cee09', analysis_prompt_version='10',
+      analysis_provider=?, analysis_model=?, analysis_duration_ms=?, analyzed_at=?,
+      process_status='completed', processing_stage='completed', last_processed_at=?, updated_at=?
+      WHERE id=? AND is_junk=0 AND is_unprocessed=0`
+      )
+      .run(
+        post?.title ?? null,
+        post?.title ?? null,
+        post?.summary ?? null,
+        JSON.stringify(
+          post
+            ? { postMode: post.mode, editorialJudgment: post.reason ?? null }
+            : {}
+        ),
+        score,
+        metadata.provider,
+        metadata.model,
+        metadata.durationMs,
+        now,
+        now,
+        now,
+        id
+      )
+    if (!result.changes) throw new Error('Content does not qualify for scoring')
     try {
       await this.refreshFrontmatter(id)
     } catch (error) {
@@ -1206,11 +1353,10 @@ export class SingleTableRepository {
       }
       this.database
         .prepare(
-          `UPDATE contents SET chinese_title=?, title=COALESCE(?,title),
-          summary=CASE WHEN content_kind='short_post' THEN ? ELSE summary END,
+          `UPDATE contents SET chinese_title=CASE WHEN json_extract(analysis_extra_json,'$.postMode') IS NULL THEN ? ELSE chinese_title END, title=CASE WHEN json_extract(analysis_extra_json,'$.postMode') IS NULL THEN COALESCE(?,title) ELSE title END,
           updated_at=? WHERE id=?`
         )
-        .run(chineseTitle, chineseTitle, chineseBody, now, id)
+        .run(chineseTitle, chineseTitle, now, id)
       await this.refreshFrontmatter(id)
       this.database
         .prepare(
@@ -1290,7 +1436,7 @@ export class SingleTableRepository {
         `UPDATE contents SET is_unprocessed=CASE WHEN ?=1 THEN 0 ELSE is_unprocessed END,
         unprocessed_reason=CASE WHEN ?=1 THEN NULL ELSE unprocessed_reason END,
         is_junk=?, junk_source='manual', junk_reason=?, junk_note=?,
-      junk_updated_at=?, value_summary=CASE WHEN ?=1 THEN NULL ELSE value_summary END,
+      junk_updated_at=?, audience_status=CASE WHEN ?=1 THEN NULL ELSE audience_status END, public_reason=CASE WHEN ?=1 THEN NULL ELSE public_reason END, business_reason=CASE WHEN ?=1 THEN NULL ELSE business_reason END, value_summary=CASE WHEN ?=1 THEN NULL ELSE value_summary END,
       interest_fit_level=CASE WHEN ?=1 THEN NULL ELSE interest_fit_level END,
       interest_fit_reason=CASE WHEN ?=1 THEN NULL ELSE interest_fit_reason END,
       concrete_gain_level=CASE WHEN ?=1 THEN NULL ELSE concrete_gain_level END,
@@ -1310,7 +1456,7 @@ export class SingleTableRepository {
         reason ?? null,
         note ?? null,
         now,
-        ...Array(11).fill(isJunk ? 1 : 0),
+        ...Array(14).fill(isJunk ? 1 : 0),
         now,
         id
       )
@@ -1439,6 +1585,7 @@ export class SingleTableRepository {
 
   search(
     query: {
+      tag?: string
       keyword?: string
       isJunk?: boolean
       isUnprocessed?: boolean
@@ -1451,13 +1598,26 @@ export class SingleTableRepository {
       read?: boolean
       minScore?: number
       maxScore?: number
+      daily?: boolean
+      attentionOrder?: boolean
       firstInflowFrom?: string
       firstInflowTo?: string
       limit?: number
+      allRows?: boolean
     } = {}
   ): ContentRow[] {
     const clauses: string[] = []
     const params: (string | number)[] = []
+    if (query.daily)
+      clauses.push(
+        "is_junk=0 AND process_status='completed' AND (analysis_rule_version='aihot-41cee09' OR recommendation IN ('core','explore'))"
+      )
+    if (query.tag && query.tag !== 'all') {
+      clauses.push(
+        'is_junk=0 AND EXISTS (SELECT 1 FROM json_each(content_tags_json) WHERE value=?)'
+      )
+      params.push(query.tag)
+    }
     if (query.keyword?.trim()) {
       clauses.push(
         `(title LIKE ? ESCAPE '\\' OR chinese_title LIKE ? ESCAPE '\\' OR summary LIKE ? ESCAPE '\\' OR keywords_text LIKE ? ESCAPE '\\' OR value_summary LIKE ? ESCAPE '\\' OR source_account_name LIKE ? ESCAPE '\\')`
@@ -1513,14 +1673,15 @@ export class SingleTableRepository {
       clauses.push('first_inflow_at<=?')
       params.push(query.firstInflowTo)
     }
+    const order = query.attentionOrder
+      ? "CASE WHEN analysis_rule_version='aihot-41cee09' THEN 0 ELSE 1 END, total_score DESC, first_inflow_at DESC"
+      : 'first_inflow_at DESC'
     const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''
     return this.database
-      .prepare(
-        `SELECT * FROM contents ${where} ORDER BY first_inflow_at DESC LIMIT ?`
-      )
+      .prepare(`SELECT * FROM contents ${where} ORDER BY ${order} LIMIT ?`)
       .all(
         ...params,
-        Math.min(Math.max(query.limit ?? 100, 1), 500)
+        query.allRows ? -1 : Math.min(Math.max(query.limit ?? 100, 1), 500)
       ) as unknown as ContentRow[]
   }
 

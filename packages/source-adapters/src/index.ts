@@ -22,7 +22,15 @@ export function classifyUnprocessedContent(input: {
   } catch {
     /* Invalid links remain ordinary failures. */
   }
-  if (!input.processMedia) {
+  if (
+    !input.processMedia &&
+    !(
+      input.kind === 'video' &&
+      (input.platform === 'youtube' ||
+        (url &&
+          /^(?:www\.|m\.)?(?:youtube\.com|youtu\.be)$/iu.test(url.hostname)))
+    )
+  ) {
     if (input.kind === 'audio') return '语音或音频内容'
     if (
       input.kind === 'video' ||
@@ -1338,7 +1346,17 @@ function mapYouTubeVideo(
   const snippet = record(video.snippet)
   const details = record(video.contentDetails)
   const statistics = record(video.statistics)
-  if (snippet.liveBroadcastContent === 'live' || video.is_live === true)
+  if (
+    snippet.liveBroadcastContent === 'live' ||
+    snippet.liveBroadcastContent === 'upcoming' ||
+    video.is_live === true ||
+    video.is_short === true ||
+    video.isShort === true ||
+    video.is_live_content === true ||
+    video.isLiveContent === true ||
+    Object.keys(record(video.liveStreamingDetails)).length > 0 ||
+    /\/(?:shorts|live)\//u.test(text(video.url) ?? '')
+  )
     return undefined
   const seconds = durationSeconds(details.duration ?? video.duration)
   const identity = normalizeYouTubeIdentity(videoId)

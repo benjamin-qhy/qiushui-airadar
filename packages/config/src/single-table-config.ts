@@ -119,8 +119,48 @@ export const collectionConcurrencySchema = z.object({
   translation_concurrency: z.number().int().positive(),
 })
 
+export const scoreRangesSchema = z
+  .array(
+    z
+      .object({
+        id: z
+          .string()
+          .regex(/^[a-zA-Z0-9_-]+$/u)
+          .max(80)
+          .refine(
+            (id) => id !== 'all' && id !== 'unscored',
+            '保留的筛选名称不能用于区间'
+          ),
+        min: z.number().int().min(0).max(100),
+        max: z.number().int().min(0).max(100),
+      })
+      .refine((range) => range.min <= range.max, '最低分不能大于最高分')
+  )
+  .max(30)
+  .refine(
+    (ranges) => new Set(ranges.map((range) => range.id)).size === ranges.length,
+    '区间不能重复'
+  )
+  .refine(
+    (ranges) =>
+      ranges.every((range, index) =>
+        ranges
+          .slice(index + 1)
+          .every((other) => range.max < other.min || other.max < range.min)
+      ),
+    '分数区间不能重叠'
+  )
+
+export const defaultScoreRanges = [
+  { id: 'score-90', min: 90, max: 100 },
+  { id: 'score-80', min: 80, max: 89 },
+  { id: 'score-60', min: 60, max: 79 },
+  { id: 'score-0', min: 0, max: 59 },
+]
+
 export const runtimeConfigSchema = z.object({
   timezone: z.literal('Asia/Shanghai'),
+  score_ranges: scoreRangesSchema.default(defaultScoreRanges),
   collection: z
     .object({
       schedule: z.string().min(1),
@@ -478,6 +518,22 @@ export async function saveCollectionConcurrency(
       .positive()
       .parse(input.requests_per_second)
   current.collection = { ...current.collection, ...values }
+  await saveEditableConfigFile(
+    configRoot,
+    'runtime.yaml',
+    stringifyYaml(current)
+  )
+}
+
+export async function saveScoreRanges(
+  configRoot: string,
+  ranges: z.output<typeof scoreRangesSchema>
+): Promise<void> {
+  const current = await parseFile(
+    path.join(configRoot, 'runtime.yaml'),
+    runtimeConfigSchema
+  )
+  current.score_ranges = scoreRangesSchema.parse(ranges)
   await saveEditableConfigFile(
     configRoot,
     'runtime.yaml',

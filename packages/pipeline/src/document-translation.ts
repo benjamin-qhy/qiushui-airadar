@@ -67,21 +67,28 @@ function safeSourceBytes(capacity: ModelCapacity): number {
   const fixedPromptBudget = 4_096
   const shared = Math.floor((safeContext - fixedPromptBudget) / 2)
   const outputBound = Math.max(1_024, capacity.maxOutputTokens - 2_048)
-  const result = Math.min(shared, outputBound)
+  // Bound each streamed request so long documents can checkpoint regularly.
+  const result = Math.min(shared, outputBound, 12_000)
   if (result < 1_024) throw new Error('Translation model capacity is too small')
   return result
 }
 
 function hardSplit(value: string, maximumBytes: number): string[] {
   const result: string[] = []
-  let current = ''
+  let start = 0
+  let offset = 0
+  let bytes = 0
   for (const character of value) {
-    if (current && utf8Bytes(current + character) > maximumBytes) {
-      result.push(current)
-      current = character
-    } else current += character
+    const size = utf8Bytes(character)
+    if (bytes && bytes + size > maximumBytes) {
+      result.push(value.slice(start, offset))
+      start = offset
+      bytes = 0
+    }
+    bytes += size
+    offset += character.length
   }
-  if (current) result.push(current)
+  if (offset > start) result.push(value.slice(start, offset))
   return result
 }
 

@@ -36,7 +36,6 @@ interface Work {
   version: 1
   processMedia?: boolean
   processTwitterVideos?: boolean
-  minimumScore: number
   concurrency?: Pick<
     Settings,
     | 'scan_concurrency'
@@ -124,7 +123,6 @@ export async function collectInStages(
     work = {
       version: 1,
       processMedia: options.settings.process_media,
-      minimumScore: options.translationMinimumTotalScore,
       concurrency: {
         scan_concurrency: options.settings.scan_concurrency,
         processing_concurrency: options.settings.processing_concurrency,
@@ -142,8 +140,6 @@ export async function collectInStages(
       work.processMedia ??
       work.processTwitterVideos ??
       options.settings.process_media,
-    translationMinimumTotalScore:
-      work.minimumScore ?? options.translationMinimumTotalScore,
   }
   const sourceState = await loadSourceState(options.configRoot)
   // Serialize durable writes and identity claims; model and network waits stay parallel.
@@ -249,23 +245,20 @@ export async function collectInStages(
                   : page.response,
             })
             entry.discovered += page.rawCount ?? page.items.length
-            for (const item of page.items) {
+            const candidates =
+              source.platform === 'youtube' && batchLimit === 20
+                ? page.items.slice(
+                    0,
+                    Math.max(
+                      0,
+                      20 - (received - (page.rawCount ?? page.items.length))
+                    )
+                  )
+                : page.items
+            for (const item of candidates) {
               const input = originalInput(source, item)
               const key = contentIdentity({ ...input, body: '' }).key
               const existing = repository.get(key)
-              const excludedReason = classifyUnprocessedContent({
-                platform: source.platform,
-                kind: item.mediaType ?? item.kind,
-                url: item.url,
-                processMedia: options.processMedia,
-              })
-              if (excludedReason) {
-                const row = existing ?? (await repository.saveDiscovery(input))
-                await repository.setUnprocessed(row.id, excludedReason)
-                if (!existing) entry.newlyInflow = (entry.newlyInflow ?? 0) + 1
-                entry.skipped++
-                continue
-              }
               if (existing || work.jobs.some((job) => job.key === key)) {
                 entry.duplicates = (entry.duplicates ?? 0) + 1
                 if (
@@ -281,6 +274,28 @@ export async function collectInStages(
                     item.externalId,
                     item.interaction
                   )
+                continue
+              }
+              if (
+                source.platform === 'youtube' &&
+                item.publishedAt &&
+                (Date.parse(item.publishedAt) < Date.parse(window.since) ||
+                  Date.parse(item.publishedAt) > Date.parse(window.until))
+              ) {
+                entry.skipped++
+                continue
+              }
+              const excludedReason = classifyUnprocessedContent({
+                platform: source.platform,
+                kind: item.mediaType ?? item.kind,
+                url: item.url,
+                processMedia: options.processMedia,
+              })
+              if (excludedReason) {
+                const row = existing ?? (await repository.saveDiscovery(input))
+                await repository.setUnprocessed(row.id, excludedReason)
+                if (!existing) entry.newlyInflow = (entry.newlyInflow ?? 0) + 1
+                entry.skipped++
                 continue
               }
               // Save the replayable job before the searchable placeholder. A crash
@@ -308,7 +323,12 @@ export async function collectInStages(
               dates.length === page.items.length &&
               dates.every((date) => Date.parse(date) < Date.parse(window.since))
             const complete =
-              !page.nextCursor || oldPage || source.platform !== 'x'
+              !page.nextCursor ||
+              oldPage ||
+              (source.platform === 'youtube' &&
+                batchLimit === 20 &&
+                received >= 20) ||
+              !['x', 'youtube'].includes(source.platform)
             if (!complete) {
               window = { ...window, cursor: page.nextCursor }
               progress.pending_window = window
@@ -488,7 +508,6 @@ export async function collectInStages(
         !row.is_junk &&
         !row.is_unprocessed &&
         row.total_score !== null &&
-        row.total_score >= options.translationMinimumTotalScore &&
         ['pending', 'running'].includes(row.translation_status)
       ) {
         const body = await repository.readBody(row.id, 'en')
@@ -501,6 +520,7 @@ export async function collectInStages(
             original: {
               ...originalInput(job.source, job.item),
               body,
+              language: row.original_language,
               title: row.title,
               originalTitle: row.original_title ?? undefined,
               format: row.original_format,
