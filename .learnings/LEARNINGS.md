@@ -36,6 +36,33 @@
 
 ---
 
+## [LRN-20261111-002] correction
+
+**Logged**: 2026-11-11T10:05:00+08:00
+**Priority**: high
+**Status**: pending
+**Area**: infra
+
+### Summary
+检查本机正式服务接口时必须绕过代理，否则会把代理返回的空响应误判为服务故障。
+
+### Details
+当前终端设置了 `HTTP_PROXY`、`HTTPS_PROXY` 和 `ALL_PROXY`，但没有 `NO_PROXY`。直接请求 `127.0.0.1:43120` 时请求经过代理并出现 `Empty reply from server`；使用 `curl --noproxy '*'` 后，正式服务正常返回 HTTP 200 和模型配置。此前据此判断“正式服务接口坏了”是错误的。
+
+### Suggested Action
+所有 localhost、127.0.0.1 和局域网正式服务检查都显式使用 `--noproxy '*'`，并在判断接口故障前先用 `curl -v` 确认实际连接目标。
+
+### Metadata
+- Source: error
+- Related Files: /Users/qiushui/.qiushui-airadar/service/logs/service.log
+- Tags: proxy, localhost, production-service, curl, diagnosis
+- Pattern-Key: infra.local_service_bypass_proxy
+- Recurrence-Count: 1
+- First-Seen: 2026-11-11
+- Last-Seen: 2026-11-11
+
+---
+
 ## [LRN-20260918-001] correction
 
 **Logged**: 2026-09-18T14:27:00+08:00
@@ -203,5 +230,27 @@ AI Radar 单表方案的内容处理必须按信源串行且抓取接口不分�
 
 - **Resolved**: 2026-09-18T00:00:00+08:00
 - **Notes**: 已更新开发方案的流程、字段、文件契约与验收要求。
+
+---
+## [LRN-20261111-001] correction
+
+**Logged**: 2026-11-11T09:20:00+08:00
+**Priority**: high
+**Status**: pending
+**Area**: backend
+
+### Summary
+核对正式版“调用日志”时，必须先按 endpoint 和阶段区分采集请求与模型请求，不能只看成功数量或 SQLite 汇总字段。
+
+### Details
+用户指出当天调用日志已有大量成功记录。进一步核对发现，`collection-runs/*-requests.jsonl` 中的成功记录是 TwitterAPI.io、TikHub 和 RSS 等采集接口，并非 Ollama；真正的模型阶段要结合 `collection-run.json` 的 `phase`、Ollama `11434` 连接、当天内容 `执行日志.md` 的 `classify/score/translate` 结果及 SQLite 分析字段判断。此前仅查询 SQLite 也不足以判断当前正在进行但尚未返回的模型调用。
+
+### Suggested Action
+以后回答“当前调用哪个模型、成功多少”时，先检查日志 endpoint 和运行阶段；分别统计采集接口成功、模型连接中、模型阶段成功/失败。数据库字段与逐条执行日志用于确认已完成结果，网络连接用于确认正在进行的调用。
+
+### Metadata
+- Source: user_feedback
+- Related Files: production-data/collection-run.json, production-data/collection-runs/*-requests.jsonl, production-data/contents/YYYYMMDD/**/执行日志.md
+- Tags: production, collection-calls, model-calls, logs, sqlite
 
 ---

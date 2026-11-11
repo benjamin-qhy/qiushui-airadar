@@ -34,11 +34,10 @@ import {
   ChevronRight,
   Columns3,
   Copy,
+  Download,
   Eye,
   ExternalLink,
-  FileText,
   Heart,
-  Image as ImageIcon,
   LayoutGrid,
   Languages,
   MessageCircle,
@@ -101,9 +100,8 @@ import {
   TableRow,
 } from '@/components/ui/table'
 import { Textarea } from '@/components/ui/textarea'
-import { api, post } from '@/lib/api'
+import { api, get, post } from '@/lib/api'
 import {
-  contentDate,
   filterContentItems,
   filterContentScope,
   type ContentFilters,
@@ -151,7 +149,7 @@ function CopyButton({
       type='button'
       variant='ghost'
       size='icon'
-      className={`size-8 ${className}`}
+      className={cn('size-8', className)}
       aria-label={copied ? '已复制' : label}
       title={copied ? '已复制' : label}
       onClick={(event) => void copy(event)}
@@ -225,10 +223,6 @@ function formatDuration(seconds: number | undefined): string | undefined {
   return `${minutes}:${String(remainder).padStart(2, '0')}`
 }
 
-function contentCover(item: FeedItem): string | undefined {
-  return item.images?.[0]?.url ?? item.video?.thumbnailUrl
-}
-
 function isXPost(item: FeedItem) {
   return (
     item.source?.type === 'x' &&
@@ -289,16 +283,6 @@ function CardBody({ item }: { item: FeedItem }) {
   )
 }
 
-function KindIcon({ kind }: { kind: FeedItem['kind'] }) {
-  return kind === 'video' ? (
-    <PlayCircle aria-hidden='true' />
-  ) : kind === 'image_post' ? (
-    <ImageIcon aria-hidden='true' />
-  ) : (
-    <FileText aria-hidden='true' />
-  )
-}
-
 function Metric({
   label,
   value,
@@ -347,6 +331,11 @@ function scoreLabel(item: FeedItem): string {
   if (item.processStatus !== 'completed')
     return statusLabels[item.processStatus]
   return '评分缺失'
+}
+
+function listScoreLabel(item: FeedItem): string {
+  if (item.totalScore !== null) return `${item.totalScore} 分`
+  return scoreLabel(item)
 }
 
 interface ContentLogEntry {
@@ -532,18 +521,32 @@ function formatLocalDate(value: Date): string {
 }
 
 function ContentDate({ item }: { item: FeedItem }) {
-  const date = contentDate(item)
+  const publishedAt =
+    item.publishedAt && Number.isFinite(Date.parse(item.publishedAt))
+      ? item.publishedAt
+      : undefined
+  const collectedAt =
+    item.firstInflowAt && Number.isFinite(Date.parse(item.firstInflowAt))
+      ? item.firstInflowAt
+      : undefined
+  const short = (value?: string) =>
+    value
+      ? new Date(value).toLocaleDateString('zh-CN', {
+          month: '2-digit',
+          day: '2-digit',
+        })
+      : '未知'
   return (
     <span
-      className='shrink-0 whitespace-nowrap'
-      title={date ? `${date.label}时间：${new Date(date.value).toLocaleString('zh-CN')}` : undefined}
+      className='flex shrink-0 items-center gap-2 whitespace-nowrap'
+      title={`发布时间：${
+        publishedAt ? new Date(publishedAt).toLocaleString('zh-CN') : '未知'
+      }\n采集时间：${
+        collectedAt ? new Date(collectedAt).toLocaleString('zh-CN') : '未知'
+      }`}
     >
-      {date
-        ? `${date.label} ${new Date(date.value).toLocaleDateString('zh-CN', {
-            month: '2-digit',
-            day: '2-digit',
-          })}`
-        : '日期未知'}
+      <span>发 {short(publishedAt)}</span>
+      <span>采 {short(collectedAt)}</span>
     </span>
   )
 }
@@ -565,7 +568,6 @@ export function ContentCard({
   compact?: boolean
   href?: string
 }) {
-  const cover = contentCover(item)
   const duration = formatDuration(item.video?.durationSeconds)
   const metrics = item.interaction
   const card = (
@@ -585,25 +587,9 @@ export function ContentCard({
         }
       }}
     >
-      <CopyButton
-        text={cardContent(item)}
-        label='复制内容'
-        className='absolute right-2 top-2 z-10 bg-background/90 opacity-100 shadow-none transition-opacity md:opacity-0 md:group-hover:opacity-100 md:group-focus-within:opacity-100'
-      />
-      <div className='mb-2 flex min-w-0 shrink-0 items-start gap-2'>
-        <div className='min-w-0 flex-1 pr-8'>
+      <div className='mb-2 flex min-w-0 shrink-0 items-center gap-2'>
+        <div className='min-w-0 flex-1'>
           <div className='flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground'>
-            {cover && !isXPost(item) ? (
-              <img
-                src={cover}
-                alt=''
-                className='size-6 shrink-0 rounded-sm object-cover'
-              />
-            ) : (
-              <span className='flex size-6 shrink-0 items-center justify-center rounded-sm bg-muted [&>svg]:size-3.5'>
-                <KindIcon kind={item.kind} />
-              </span>
-            )}
             <span className='truncate'>
               {href ? (
                 <a
@@ -620,9 +606,15 @@ export function ContentCard({
                 (item.source?.name ?? '未知信源')
               )}
             </span>
+            <Badge
+              variant='outline'
+              className='shrink-0 px-1.5 py-0 text-[10px] font-normal'
+            >
+              {item.kind ? kindLabels[item.kind] : '未知'}
+            </Badge>
             <span aria-hidden='true'>·</span>
             <span className='shrink-0 font-semibold text-foreground'>
-              {scoreLabel(item)}
+              {listScoreLabel(item)}
             </span>
             {!item.read && (
               <span
@@ -632,16 +624,56 @@ export function ContentCard({
             )}
           </div>
         </div>
-      </div>
-      {item.topics.length > 0 && (
-        <div className='flex flex-wrap gap-1'>
-          {item.topics.map((tag) => (
-            <Badge key={tag} variant='outline'>
-              {tag}
-            </Badge>
-          ))}
+        <div className='flex shrink-0 items-center gap-2.5'>
+          {onFavorite && (
+            <button
+              type='button'
+              className='inline-flex items-center justify-center text-muted-foreground transition-colors hover:text-foreground disabled:pointer-events-none disabled:opacity-50'
+              aria-label={
+                item.utilizationActions.includes('favorite')
+                  ? '取消收藏'
+                  : '收藏'
+              }
+              aria-pressed={item.utilizationActions.includes('favorite')}
+              title={
+                item.utilizationActions.includes('favorite')
+                  ? '取消收藏'
+                  : '收藏'
+              }
+              disabled={item.junk.isJunk || favoritePending}
+              onClick={(event) => {
+                event.stopPropagation()
+                onFavorite()
+              }}
+            >
+              <Bookmark
+                className={cn(
+                  'size-4',
+                  item.utilizationActions.includes('favorite') && 'fill-current'
+                )}
+              />
+            </button>
+          )}
+          {item.url && (
+            <a
+              href={item.url}
+              target='_blank'
+              rel='noreferrer'
+              className='inline-flex items-center justify-center text-muted-foreground transition-colors hover:text-foreground'
+              aria-label={isXPost(item) ? '在 X 查看原推' : '打开原文'}
+              title={isXPost(item) ? '在 X 查看原推' : '打开原文'}
+              onClick={(event) => event.stopPropagation()}
+            >
+              <ExternalLink className='size-4' />
+            </a>
+          )}
         </div>
-      )}
+        <CopyButton
+          text={cardContent(item)}
+          label='复制内容'
+          className='size-4 text-muted-foreground hover:bg-transparent hover:text-foreground opacity-100 transition-opacity md:opacity-0 md:group-hover:opacity-100 md:group-focus-within:opacity-100'
+        />
+      </div>
       {!isXPost(item) && item.kind !== 'short_post' && item.title && (
         <h2 className='mb-1 line-clamp-3 shrink-0 text-base font-semibold leading-6 lg:line-clamp-2 lg:text-sm lg:leading-5 text-foreground'>
           {href ? (
@@ -673,109 +705,60 @@ export function ContentCard({
       >
         <CardBody item={item} />
       </div>
-      <div className='mt-auto shrink-0 pt-2'>
-        <div className='flex flex-wrap items-center justify-between gap-2 pt-2 text-xs lg:text-[11px] text-muted-foreground'>
-          <div className='flex min-w-0 flex-wrap items-center gap-2.5'>
-            <ContentDate item={item} />
-            {!compact && (
-              <>
-                <Metric label='浏览' value={metrics?.views} icon={Eye} />
-                <Metric label='点赞' value={metrics?.likes} icon={Heart} />
-                <Metric
-                  label='评论'
-                  value={metrics?.comments}
-                  icon={MessageCircle}
-                />
-              </>
-            )}
-          </div>
-          <div className='flex shrink-0 items-center gap-1'>
-            {onFavorite && (
-              <Button
-                variant='ghost'
-                size='icon'
-                className='size-11 lg:size-8'
-                aria-label={
-                  item.utilizationActions.includes('favorite')
-                    ? '取消收藏'
-                    : '收藏'
-                }
-                aria-pressed={item.utilizationActions.includes('favorite')}
-                title={
-                  item.utilizationActions.includes('favorite')
-                    ? '取消收藏'
-                    : '收藏'
-                }
-                disabled={item.junk.isJunk || favoritePending}
-                onClick={(event) => {
-                  event.stopPropagation()
-                  onFavorite()
-                }}
-              >
-                <Bookmark
-                  className={
-                    item.utilizationActions.includes('favorite')
-                      ? 'fill-current'
-                      : ''
-                  }
-                />
-              </Button>
-            )}
-            {item.url && (
-              <Button
-                asChild
-                variant='ghost'
-                size='icon'
-                className='size-11 lg:size-8'
-                onClick={(event) => event.stopPropagation()}
-              >
-                <a
-                  href={item.url}
-                  target='_blank'
-                  rel='noreferrer'
-                  aria-label={isXPost(item) ? '在 X 查看原推' : '打开原文'}
-                  title={isXPost(item) ? '在 X 查看原推' : '打开原文'}
-                >
-                  <ExternalLink />
-                </a>
-              </Button>
-            )}
-          </div>
-        </div>
-        {item.processStatus === 'unprocessed' && (
-          <Badge
-            variant='outline'
-            className='mt-2 max-w-full whitespace-normal text-left'
-          >
-            未处理 · {item.unprocessedReason}
-          </Badge>
-        )}
-        {item.junk.isJunk && (
-          <Badge
-            variant='destructive'
-            className='mt-2 max-w-full whitespace-normal text-left'
-          >
-            垃圾内容 ·{' '}
-            {item.junk.note ??
-              item.junk.reason ??
-              (item.junk.source === 'manual' ? '人工标记' : 'AI 判定')}
-          </Badge>
-        )}
-        {item.processStatus !== 'completed' &&
-          item.processStatus !== 'unprocessed' && (
-            <Badge variant='outline' className='mt-2'>
-              {statusLabels[item.processStatus]}
+      {item.topics.length > 0 && (
+        <div className='mt-2 flex flex-wrap gap-1'>
+          {item.topics.map((tag) => (
+            <Badge key={tag} variant='outline'>
+              {tag}
             </Badge>
-          )}
+          ))}
+        </div>
+      )}
+      <div className='mt-auto flex shrink-0 flex-wrap items-center gap-2.5 pt-4 text-xs lg:text-[11px] text-muted-foreground'>
+        <ContentDate item={item} />
+        {!compact && (
+          <>
+            <Metric label='浏览' value={metrics?.views} icon={Eye} />
+            <Metric label='点赞' value={metrics?.likes} icon={Heart} />
+            <Metric
+              label='评论'
+              value={metrics?.comments}
+              icon={MessageCircle}
+            />
+          </>
+        )}
       </div>
+      {item.processStatus === 'unprocessed' && (
+        <Badge
+          variant='outline'
+          className='mt-2 max-w-full whitespace-normal text-left'
+        >
+          未处理 · {item.unprocessedReason}
+        </Badge>
+      )}
+      {item.junk.isJunk && (
+        <Badge
+          variant='destructive'
+          className='mt-2 max-w-full whitespace-normal text-left'
+        >
+          垃圾内容 ·{' '}
+          {item.junk.note ??
+            item.junk.reason ??
+            (item.junk.source === 'manual' ? '人工标记' : 'AI 判定')}
+        </Badge>
+      )}
+      {item.processStatus !== 'completed' &&
+        item.processStatus !== 'unprocessed' && (
+          <Badge variant='outline' className='mt-2'>
+            {statusLabels[item.processStatus]}
+          </Badge>
+        )}
     </article>
   )
   if (compact) return card
   return (
     <HoverCard openDelay={350} closeDelay={150}>
-      <HoverCardTrigger asChild>
-        {card}
-      </HoverCardTrigger>
+      <HoverCardTrigger asChild>{card}</HoverCardTrigger>
       <HoverCardContent
         side='right'
         align='start'
@@ -906,6 +889,20 @@ export function Detail({
   const [operationMessage, setOperationMessage] = useState('')
   const actionLock = useRef(false)
   const [actionPending, setActionPending] = useState(false)
+  const videoAssetsLoadingRef = useRef(false)
+  const [videoAssetsLoading, setVideoAssetsLoading] = useState(false)
+  const transcriptTranslatingRef = useRef(false)
+  const [transcriptTranslating, setTranscriptTranslating] = useState(false)
+  async function fetchFeedItem(id: string): Promise<FeedItem | undefined> {
+    try {
+      const result = await get<{ item: FeedItem }>(
+        `/api/contents/${encodeURIComponent(id)}`
+      )
+      return result.item
+    } catch {
+      return undefined
+    }
+  }
   async function toggleAction(action: UtilizationAction) {
     const actions = item.utilizationActions.includes(action)
       ? item.utilizationActions.filter((value) => value !== action)
@@ -965,6 +962,82 @@ export function Detail({
     })
     setOperationMessage(`翻译任务已开始：${result.taskId.slice(0, 8)}`)
   }
+  async function fetchVideoAssets() {
+    if (videoAssetsLoadingRef.current) return
+    videoAssetsLoadingRef.current = true
+    setVideoAssetsLoading(true)
+    try {
+      const result = await post<{ taskId: string }>(
+        `/api/contents/${encodeURIComponent(item.id)}/fetch-video-assets`,
+        {}
+      )
+      setOperationMessage(
+        `视频素材任务已开始：${result.taskId.slice(0, 8)}，获取完成后自动刷新`
+      )
+      const baseline = item.video?.assetsFetchedAt ?? null
+      const started = Date.now()
+      const poller = setInterval(async () => {
+        if (Date.now() - started > 180_000) {
+          clearInterval(poller)
+          setVideoAssetsLoading(false)
+          return
+        }
+        try {
+          const fresh = await fetchFeedItem(item.id)
+          const fetchedAt = fresh?.video?.assetsFetchedAt ?? null
+          if (fresh && fetchedAt && fetchedAt !== baseline) {
+            onChanged(fresh)
+            clearInterval(poller)
+            setVideoAssetsLoading(false)
+          }
+        } catch {
+          // ignore poll errors
+        }
+      }, 2_000)
+    } catch (error) {
+      setOperationMessage(
+        `获取视频素材失败：${error instanceof Error ? error.message : String(error)}`
+      )
+      setVideoAssetsLoading(false)
+    }
+  }
+  async function transcribeVideoTranscript() {
+    if (transcriptTranslatingRef.current) return
+    transcriptTranslatingRef.current = true
+    setTranscriptTranslating(true)
+    try {
+      const result = await post<{ taskId: string }>(
+        `/api/contents/${encodeURIComponent(item.id)}/transcribe-video-transcript`,
+        {}
+      )
+      setOperationMessage(`字幕翻译任务已开始：${result.taskId.slice(0, 8)}`)
+      const baseline = item.video?.transcriptChineseFetchedAt ?? null
+      const started = Date.now()
+      const poller = setInterval(async () => {
+        if (Date.now() - started > 600_000) {
+          clearInterval(poller)
+          setTranscriptTranslating(false)
+          return
+        }
+        try {
+          const fresh = await fetchFeedItem(item.id)
+          const fetchedAt = fresh?.video?.transcriptChineseFetchedAt ?? null
+          if (fresh && fetchedAt && fetchedAt !== baseline) {
+            onChanged(fresh)
+            clearInterval(poller)
+            setTranscriptTranslating(false)
+          }
+        } catch {
+          // ignore
+        }
+      }, 2_000)
+    } catch (error) {
+      setOperationMessage(
+        `字幕翻译失败：${error instanceof Error ? error.message : String(error)}`
+      )
+      setTranscriptTranslating(false)
+    }
+  }
   const showHeaderMetadata =
     item.processStatus === 'unprocessed' ||
     item.junk.isJunk ||
@@ -1000,6 +1073,78 @@ export function Detail({
           : item.translationSkipReason === 'below_score_threshold'
             ? '内容评分未达到自动翻译条件。'
             : undefined
+  const topicSection = (
+    <section aria-label='内容标签'>
+      <dl className='grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 pr-10 text-sm'>
+        <dt>内容分类</dt>
+        <dd>
+          {contentCategories
+            .filter((tag) => item.topics.includes(tag))
+            .join('、') || '暂无分类'}
+        </dd>
+        <dt>主题</dt>
+        <dd>
+          {contentThemes
+            .filter((tag) => item.topics.includes(tag))
+            .join('、') || '暂无主题'}
+        </dd>
+        <dt>关键词</dt>
+        <dd>{item.keywordsText || '暂无关键词'}</dd>
+        <dt>关注度</dt>
+        <dd>
+          {item.totalScore !== null
+            ? `${item.totalScore} 分`
+            : scoreLabel(item)}
+        </dd>
+      </dl>
+    </section>
+  )
+  const summaryCopyText = [
+    `内容分类：${
+      contentCategories.filter((tag) => item.topics.includes(tag)).join('、') ||
+      '暂无分类'
+    }`,
+    `主题：${
+      contentThemes.filter((tag) => item.topics.includes(tag)).join('、') ||
+      '暂无主题'
+    }`,
+    `关键词：${item.keywordsText || '暂无关键词'}`,
+    `关注度：${
+      item.totalScore !== null ? `${item.totalScore} 分` : scoreLabel(item)
+    }`,
+    ...Object.entries(item.scores).map(([key, value]) => {
+      const parsed = scoreParts(value)
+      return `${scoreLabels[key] ?? key}：${parsed.level}${
+        parsed.reason ? `（${parsed.reason}）` : ''
+      }`
+    }),
+    item.chineseTranslation
+      ? `中文简介：\n${item.chineseTranslation}`
+      : undefined,
+    item.editorialJudgment
+      ? `推荐理由：\n${item.editorialJudgment}`
+      : undefined,
+  ]
+    .filter(Boolean)
+    .join('\n\n')
+  const chineseCopyText =
+    item.kind === 'video'
+      ? (item.video?.transcriptChinese ?? '')
+      : item.postMode === 'original-link'
+        ? (item.summary ?? '')
+        : (chineseBody ?? '')
+  const englishCopyText =
+    item.kind === 'video'
+      ? [
+          `标题：${item.originalTitle ?? item.title}`,
+          `简介：\n${item.body}`,
+          item.video?.transcriptText
+            ? `原文：\n${item.video.transcriptText}`
+            : '',
+        ]
+          .filter(Boolean)
+          .join('\n\n')
+      : (englishBody ?? '')
   return (
     <Sidebar
       side='right'
@@ -1226,6 +1371,9 @@ export function Detail({
             )}
             <div className='mb-2 flex min-w-0 items-center gap-2 text-xs text-muted-foreground lg:hidden'>
               <Badge>{scoreLabel(item)}</Badge>
+              <Badge variant='secondary'>
+                {item.kind ? kindLabels[item.kind] : '未知'}
+              </Badge>
               <span className='truncate'>
                 {item.source?.name ?? '未知信源'}
               </span>
@@ -1260,9 +1408,16 @@ export function Detail({
                 icon={Bookmark}
               />
               <span className='whitespace-nowrap'>
+                发布{' '}
                 {item.publishedAt
                   ? new Date(item.publishedAt).toLocaleString('zh-CN')
-                  : '发布时间未知'}
+                  : '未知'}
+              </span>
+              <span className='whitespace-nowrap'>
+                采集{' '}
+                {item.firstInflowAt
+                  ? new Date(item.firstInflowAt).toLocaleString('zh-CN')
+                  : '未知'}
               </span>
             </div>
             {operationMessage && (
@@ -1290,44 +1445,21 @@ export function Detail({
         </SidebarHeader>
         <SidebarContent className='px-5 py-5 md:px-6'>
           <div className='mx-auto max-w-3xl'>
-            <section aria-label='内容标签' className='mb-5 border-b pb-4'>
-              <dl className='grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-sm'>
-                <dt>内容分类</dt>
-                <dd>
-                  {contentCategories
-                    .filter((tag) => item.topics.includes(tag))
-                    .join('、') || '暂无分类'}
-                </dd>
-                <dt>主题</dt>
-                <dd>
-                  {contentThemes
-                    .filter((tag) => item.topics.includes(tag))
-                    .join('、') || '暂无主题'}
-                </dd>
-                <dt>关键词</dt>
-                <dd>{item.keywordsText || '暂无关键词'}</dd>
-              </dl>
-            </section>
             <TabsContent value='chinese' className='relative m-0 space-y-5'>
+              {isXPost(item) && topicSection}
               {isXPost(item) &&
                 item.summary &&
                 item.summary.replace(/\s+/g, ' ').trim() !== item.title &&
                 item.summary !== chineseBody &&
                 item.summary !== englishBody && (
                   <section className='mb-4'>
-                    <h3 className='text-sm font-semibold'>AI 导读</h3>
+                    <h3 className='text-sm font-semibold'>AI 总结</h3>
                     <p>{item.summary}</p>
                   </section>
                 )}
-              {isXPost(item) && item.editorialJudgment && (
-                <section className='mb-4'>
-                  <h3 className='text-sm font-semibold'>推荐理由</h3>
-                  <p>{item.editorialJudgment}</p>
-                </section>
-              )}
-              {chineseBody && (
+              {chineseCopyText && (
                 <CopyButton
-                  text={chineseBody}
+                  text={chineseCopyText}
                   label='复制中文内容'
                   className='absolute right-0 top-0 z-10 bg-background/90'
                 />
@@ -1342,43 +1474,104 @@ export function Detail({
                   <PlayCircle className='absolute left-1/2 top-1/2 size-14 -translate-x-1/2 -translate-y-1/2 text-code-foreground' />
                 </div>
               )}
-              {item.postMode === 'original-link' ? (
-                item.summary && <p>{item.summary}</p>
-              ) : chineseBody ? (
-                <div className='space-y-3 whitespace-pre-wrap break-words leading-8 [&_a]:underline [&_h1]:font-semibold [&_h2]:font-semibold [&_h3]:font-semibold [&_li]:ml-5 [&_ol]:list-decimal [&_ul]:list-disc'>
-                  <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                    {chineseBody}
-                  </ReactMarkdown>
-                </div>
-              ) : (
-                <div className='space-y-3'>
-                  <p className='text-sm text-muted-foreground'>
-                    {item.originalLanguage === 'en'
-                      ? (translationSkipMessage ??
-                        '未生成中文意译；中文 AI 总结可在“AI 总结”中查看。')
-                      : '暂无中文正文'}
-                  </p>
-                  {canTranslate && (
+              {item.kind === 'video' && (
+                <>
+                  <div className='flex flex-wrap items-center gap-2 pr-10'>
                     <Button
                       variant='outline'
-                      disabled={translationRunning}
-                      onClick={() => void translate()}
+                      size='sm'
+                      disabled={videoAssetsLoading}
+                      onClick={() => void fetchVideoAssets()}
                     >
-                      <Languages />
-                      {translationRunning
-                        ? `正在翻译 ${item.translationCompletedChunks ?? 0}/${item.translationChunkCount ?? '?'}`
-                        : item.translationStatus === 'failed'
-                          ? '重新生成中文意译'
-                          : '生成中文意译'}
+                      <Download className='size-4' />
+                      {videoAssetsLoading ? '正在获取素材…' : '获取详情'}
                     </Button>
+                    {item.video?.transcriptText && (
+                      <Button
+                        variant='outline'
+                        size='sm'
+                        disabled={transcriptTranslating}
+                        onClick={() => void transcribeVideoTranscript()}
+                      >
+                        <Languages className='size-4' />
+                        {transcriptTranslating ? '正在翻译字幕…' : '字幕翻译'}
+                      </Button>
+                    )}
+                    {item.video?.mediaUrl && (
+                      <Button asChild variant='outline' size='sm'>
+                        <a
+                          href={item.video.mediaUrl}
+                          target='_blank'
+                          rel='noreferrer'
+                          className='inline-flex items-center gap-2'
+                        >
+                          <ExternalLink className='size-4' />
+                          下载视频
+                          {item.video.mediaQuality && (
+                            <span className='text-xs text-muted-foreground'>
+                              ({item.video.mediaQuality})
+                            </span>
+                          )}
+                        </a>
+                      </Button>
+                    )}
+                    {item.video?.assetsFetchedAt && (
+                      <span className='text-xs text-muted-foreground'>
+                        已获取：
+                        {new Date(item.video.assetsFetchedAt).toLocaleString()}
+                      </span>
+                    )}
+                  </div>
+                  {item.video?.transcriptChinese && (
+                    <div className='space-y-3 whitespace-pre-wrap break-words leading-8'>
+                      {item.video.transcriptChinese}
+                    </div>
                   )}
-                  {item.translationError && (
-                    <p className='text-xs text-destructive'>
-                      {item.translationError}
-                    </p>
-                  )}
-                </div>
+                </>
               )}
+              {item.kind !== 'video' &&
+                (item.postMode === 'original-link' ? (
+                  item.summary && <p>{item.summary}</p>
+                ) : chineseBody ? (
+                  <div className='space-y-3'>
+                    {isXPost(item) && (
+                      <h3 className='text-sm font-semibold'>中文内容</h3>
+                    )}
+                    <div className='whitespace-pre-wrap break-words leading-8 [&_a]:underline [&_h1]:font-semibold [&_h2]:font-semibold [&_h3]:font-semibold [&_li]:ml-5 [&_ol]:list-decimal [&_ul]:list-disc'>
+                      <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                        {chineseBody}
+                      </ReactMarkdown>
+                    </div>
+                  </div>
+                ) : (
+                  <div className='space-y-3'>
+                    <p className='text-sm text-muted-foreground'>
+                      {item.originalLanguage === 'en'
+                        ? (translationSkipMessage ??
+                          '未生成中文意译；中文 AI 总结可在“AI 总结”中查看。')
+                        : '暂无中文正文'}
+                    </p>
+                    {canTranslate && (
+                      <Button
+                        variant='outline'
+                        disabled={translationRunning}
+                        onClick={() => void translate()}
+                      >
+                        <Languages />
+                        {translationRunning
+                          ? `正在翻译 ${item.translationCompletedChunks ?? 0}/${item.translationChunkCount ?? '?'}`
+                          : item.translationStatus === 'failed'
+                            ? '重新生成中文意译'
+                            : '生成中文意译'}
+                      </Button>
+                    )}
+                    {item.translationError && (
+                      <p className='text-xs text-destructive'>
+                        {item.translationError}
+                      </p>
+                    )}
+                  </div>
+                ))}
               {item.repostedBy && (
                 <p className='text-sm text-muted-foreground'>
                   由{' '}
@@ -1397,61 +1590,69 @@ export function Detail({
             </TabsContent>
             {englishBody && (
               <TabsContent value='english' className='relative m-0'>
-                <CopyButton
-                  text={englishBody}
-                  label='复制英文内容'
-                  className='absolute right-0 top-0 z-10 bg-background/90'
-                />
-                <div className='whitespace-pre-wrap break-words leading-8 [&_a]:underline [&_h1]:font-semibold [&_h2]:font-semibold [&_h3]:font-semibold [&_li]:ml-5 [&_ol]:list-decimal [&_ul]:list-disc'>
-                  {item.originalFormat === 'markdown_article' ? (
-                    <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                      {englishBody}
-                    </ReactMarkdown>
-                  ) : (
-                    englishBody
-                  )}
-                </div>
-                {isXPost(item) && <PostMedia item={item} />}
+                {englishCopyText && (
+                  <CopyButton
+                    text={englishCopyText}
+                    label='复制英文内容'
+                    className='absolute right-0 top-0 z-10 bg-background/90'
+                  />
+                )}
+                {item.kind === 'video' ? (
+                  <div className='space-y-5'>
+                    <section>
+                      <h3 className='mb-2 text-sm font-semibold'>标题</h3>
+                      <p className='break-words pr-10'>
+                        {item.originalTitle ?? item.title}
+                      </p>
+                    </section>
+                    <section>
+                      <h3 className='mb-2 text-sm font-semibold'>简介</h3>
+                      <p className='whitespace-pre-wrap break-words leading-7'>
+                        {item.body}
+                      </p>
+                    </section>
+                    {item.video?.transcriptText && (
+                      <section>
+                        <div className='mb-2 flex items-center justify-between'>
+                          <h3 className='text-sm font-semibold'>原文</h3>
+                          {item.video.transcriptLanguage && (
+                            <span className='text-xs text-muted-foreground'>
+                              语言：{item.video.transcriptLanguage}
+                            </span>
+                          )}
+                        </div>
+                        <div className='whitespace-pre-wrap break-words leading-8'>
+                          {item.video.transcriptText}
+                        </div>
+                      </section>
+                    )}
+                  </div>
+                ) : (
+                  <>
+                    <div className='whitespace-pre-wrap break-words pr-10 leading-8 [&_a]:underline [&_h1]:font-semibold [&_h2]:font-semibold [&_h3]:font-semibold [&_li]:ml-5 [&_ol]:list-decimal [&_ul]:list-disc'>
+                      {item.originalFormat === 'markdown_article' ? (
+                        <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                          {englishBody}
+                        </ReactMarkdown>
+                      ) : (
+                        englishBody
+                      )}
+                    </div>
+                    {isXPost(item) && <PostMedia item={item} />}
+                  </>
+                )}
               </TabsContent>
             )}
             <TabsContent value='summary' className='relative m-0 space-y-6'>
-              {item.summary && (
+              {summaryCopyText && (
                 <CopyButton
-                  text={item.summary}
+                  text={summaryCopyText}
                   label='复制 AI 总结'
                   className='absolute right-0 top-0 z-10 bg-background/90'
                 />
               )}
+              {topicSection}
               <section>
-                <h3 className='mb-2 text-sm font-semibold'>
-                  {(item.kind === 'short_post' || item.kind === 'image_post') &&
-                  !['understand', 'long'].includes(item.postMode ?? '')
-                    ? '帖子内容'
-                    : 'AI 总结'}
-                </h3>
-                {item.kind === 'short_post' || item.summary ? (
-                  <div className='space-y-3 break-words leading-7 [&_a]:underline [&_h1]:font-semibold [&_h2]:font-semibold [&_h3]:font-semibold [&_li]:ml-5 [&_ol]:list-decimal [&_ul]:list-disc'>
-                    {item.kind === 'short_post' ? (
-                      <p className='whitespace-pre-wrap'>{cardContent(item)}</p>
-                    ) : (
-                      <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                        {item.summary}
-                      </ReactMarkdown>
-                    )}
-                  </div>
-                ) : (
-                  <p className='text-sm text-muted-foreground'>暂无 AI 总结</p>
-                )}
-              </section>
-              {item.editorialJudgment && (
-                <section>
-                  <h3 className='mb-2 text-sm font-semibold'>推荐理由</h3>
-                  <p>{item.editorialJudgment}</p>
-                </section>
-              )}
-              <section>
-                <h3 className='mb-2 text-sm font-semibold'>评分</h3>
-                <p className='mb-3 text-lg font-semibold'>{scoreLabel(item)}</p>
                 <div className='grid gap-3 sm:grid-cols-2'>
                   {Object.entries(item.scores).map(([key, value]) => (
                     <div key={key} className='border-l px-3 py-2'>
@@ -1470,6 +1671,48 @@ export function Detail({
                   ))}
                 </div>
               </section>
+              {item.kind !== 'video' && (
+                <section>
+                  <h3 className='mb-2 text-sm font-semibold'>
+                    {(item.kind === 'short_post' ||
+                      item.kind === 'image_post') &&
+                    !['understand', 'long'].includes(item.postMode ?? '')
+                      ? '帖子内容'
+                      : 'AI 总结'}
+                  </h3>
+                  {item.kind === 'short_post' || item.summary ? (
+                    <div className='space-y-3 break-words leading-7 [&_a]:underline [&_h1]:font-semibold [&_h2]:font-semibold [&_h3]:font-semibold [&_li]:ml-5 [&_ol]:list-decimal [&_ul]:list-disc'>
+                      {item.kind === 'short_post' ? (
+                        <p className='whitespace-pre-wrap'>
+                          {cardContent(item)}
+                        </p>
+                      ) : (
+                        <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                          {item.summary}
+                        </ReactMarkdown>
+                      )}
+                    </div>
+                  ) : (
+                    <p className='text-sm text-muted-foreground'>
+                      暂无 AI 总结
+                    </p>
+                  )}
+                </section>
+              )}
+              {item.kind === 'video' && item.chineseTranslation && (
+                <section>
+                  <h3 className='mb-2 text-sm font-semibold'>中文简介</h3>
+                  <p className='whitespace-pre-wrap break-words leading-7'>
+                    {item.chineseTranslation}
+                  </p>
+                </section>
+              )}
+              {item.editorialJudgment && (
+                <section>
+                  <h3 className='mb-2 text-sm font-semibold'>推荐理由</h3>
+                  <p>{item.editorialJudgment}</p>
+                </section>
+              )}
             </TabsContent>
             <TabsContent value='properties' className='m-0'>
               <dl className='grid gap-x-6 gap-y-4 text-sm sm:grid-cols-2 [&_dt]:text-muted-foreground [&_dd]:mt-1 [&_dd]:break-words'>
@@ -1746,9 +1989,15 @@ export function ContentWorkspace({ scope }: { scope: ContentScope }) {
   useEffect(() => {
     let active = true
     void api<{ ranges: ScoreRange[] }>('/api/config/score-ranges')
-      .then(({ ranges }) => { if (active) setScoreRanges(ranges) })
-      .catch((reason) => { if (active) setScoreRangesError(`分数区间读取失败：${String(reason)}`) })
-    return () => { active = false }
+      .then(({ ranges }) => {
+        if (active) setScoreRanges(ranges)
+      })
+      .catch((reason) => {
+        if (active) setScoreRangesError(`分数区间读取失败：${String(reason)}`)
+      })
+    return () => {
+      active = false
+    }
   }, [])
   const url = useBrowserUrl()
   const selected = readRoute(url).contentId
@@ -1779,10 +2028,11 @@ export function ContentWorkspace({ scope }: { scope: ContentScope }) {
       dateFrom: saved?.dateFrom ?? '',
       dateTo: saved?.dateTo ?? '',
       datePreset: saved?.datePreset ?? 'all',
+      dateField: saved?.dateField ?? 'published',
       kind: 'all',
       tag: 'all',
       sourceType: 'all',
-      sort: scope === 'daily' ? 'score-desc' : 'newest',
+      sort: scope === 'daily' ? 'score-desc' : 'published-desc',
       scoreRange: 'all',
       ...(saved ?? {}),
     }
@@ -1824,9 +2074,7 @@ export function ContentWorkspace({ scope }: { scope: ContentScope }) {
   }, [])
   const load = useCallback(
     (active: () => boolean) =>
-      api<{ items: FeedItem[] }>(
-        `/api/contents?scope=${scope}`
-      )
+      api<{ items: FeedItem[] }>(`/api/contents?scope=${scope}`)
         .then((data) => {
           if (!active()) return
           setItems(data.items)
@@ -1839,7 +2087,11 @@ export function ContentWorkspace({ scope }: { scope: ContentScope }) {
   )
   const visible = useMemo(() => {
     const scoped = filterContentScope(items ?? [], scope)
-    const filtered = filterContentItems(scoped, { ...filters, junk: 'all' }, scoreRanges)
+    const filtered = filterContentItems(
+      scoped,
+      { ...filters, junk: 'all' },
+      scoreRanges
+    )
     return [...filtered].sort((left, right) => {
       if (filters.sort === 'score-desc')
         return (
@@ -1847,17 +2099,18 @@ export function ContentWorkspace({ scope }: { scope: ContentScope }) {
             Number(left.analysis?.ruleVersion === 'aihot-41cee09') ||
           (right.totalScore ?? -1) - (left.totalScore ?? -1)
         )
-      const leftTime =
-        Date.parse(contentDate(left)?.value ?? '') || 0
-      const rightTime =
-        Date.parse(contentDate(right)?.value ?? '') || 0
-      return filters.sort === 'oldest'
-        ? leftTime - rightTime
-        : rightTime - leftTime
+      const field =
+        filters.sort === 'collected-desc' ? 'firstInflowAt' : 'publishedAt'
+      const leftTime = Date.parse(left[field] ?? '') || 0
+      const rightTime = Date.parse(right[field] ?? '') || 0
+      return rightTime - leftTime
     })
   }, [items, filters, scope, scoreRanges])
   const paginationKey = JSON.stringify([filters, scope])
-  const [pagination, setPagination] = useState({ key: paginationKey, limit: 100 })
+  const [pagination, setPagination] = useState({
+    key: paginationKey,
+    limit: 100,
+  })
   const renderLimit = pagination.key === paginationKey ? pagination.limit : 100
   const index = visible.findIndex((item) => item.id === selected)
   const selectedItem = selected
@@ -2329,15 +2582,29 @@ export function ContentWorkspace({ scope }: { scope: ContentScope }) {
           <FilterGroup
             role='group'
             aria-label='内容搜索与筛选'
-            className={cn('shrink-0 max-lg:grid max-lg:grid-cols-2 max-lg:w-full max-lg:gap-2 max-lg:[&>button]:h-11 max-lg:[&>button]:max-w-none max-lg:[&>button]:justify-start max-lg:[&>button]:text-sm', showingDetail && 'flex w-full flex-wrap gap-1')}
+            className={cn(
+              'shrink-0 max-lg:grid max-lg:grid-cols-2 max-lg:w-full max-lg:gap-2 max-lg:[&>button]:h-11 max-lg:[&>button]:max-w-none max-lg:[&>button]:justify-start max-lg:[&>button]:text-sm',
+              showingDetail && 'flex w-full flex-wrap gap-1'
+            )}
           >
             <FilterDropdown
-              label='分数区间'
-              value={scoreRanges.some((range) => range.id === filters.scoreRange) || filters.scoreRange === 'unscored' ? filters.scoreRange! : 'all'}
+              label='分数'
+              value={
+                scoreRanges.some((range) => range.id === filters.scoreRange) ||
+                filters.scoreRange === 'unscored'
+                  ? filters.scoreRange!
+                  : 'all'
+              }
               onChange={(value) => setFilter('scoreRange', value)}
               options={[
                 { value: 'all', label: '全部分数' },
-                ...scoreRanges.map((range) => ({ value: range.id, label: `${range.min}–${range.max} 分` })),
+                ...[...scoreRanges]
+                  .filter((range) => range.min > 0)
+                  .sort((left, right) => right.min - left.min)
+                  .map((range) => ({
+                    value: range.id,
+                    label: `大于 ${range.min} 分`,
+                  })),
                 { value: 'unscored', label: '未评分' },
               ]}
             />
@@ -2366,13 +2633,18 @@ export function ContentWorkspace({ scope }: { scope: ContentScope }) {
             />
             <FilterDropdown
               label='排序'
-              value={filters.sort ?? 'newest'}
+              value={
+                filters.sort === 'score-desc' ||
+                filters.sort === 'collected-desc'
+                  ? filters.sort
+                  : 'published-desc'
+              }
               onChange={(value) => setFilter('sort', value)}
               icon={ArrowDownWideNarrow}
               options={[
                 { value: 'score-desc', label: '关注度最高' },
-                { value: 'newest', label: '最新日期' },
-                { value: 'oldest', label: '最早日期' },
+                { value: 'published-desc', label: '按发布日期' },
+                { value: 'collected-desc', label: '按采集日期' },
               ]}
             />
 
@@ -2397,8 +2669,26 @@ export function ContentWorkspace({ scope }: { scope: ContentScope }) {
               </DropdownMenuTrigger>
               <DropdownMenuContent align='end' className='w-40'>
                 <DropdownMenuLabel className='text-xs max-lg:min-h-11 max-lg:text-sm'>
-                  发布日期优先，无则按采集日期
+                  日期基准
                 </DropdownMenuLabel>
+                <DropdownMenuItem
+                  className='text-xs max-lg:min-h-11 max-lg:text-sm'
+                  onSelect={() => setFilter('dateField', 'published')}
+                >
+                  按发布日期
+                  {filters.dateField !== 'collected' && (
+                    <Check className='ml-auto size-3' />
+                  )}
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  className='text-xs max-lg:min-h-11 max-lg:text-sm'
+                  onSelect={() => setFilter('dateField', 'collected')}
+                >
+                  按采集日期
+                  {filters.dateField === 'collected' && (
+                    <Check className='ml-auto size-3' />
+                  )}
+                </DropdownMenuItem>
                 <DropdownMenuSeparator />
                 <DropdownMenuItem
                   className='text-xs max-lg:min-h-11 max-lg:text-sm'
@@ -2604,7 +2894,11 @@ export function ContentWorkspace({ scope }: { scope: ContentScope }) {
         </ButtonGroup>
       </PageHeader>
 
-      {scoreRangesError && <p role='alert' className='px-4 pb-2 text-sm text-destructive'>{scoreRangesError}</p>}
+      {scoreRangesError && (
+        <p role='alert' className='px-4 pb-2 text-sm text-destructive'>
+          {scoreRangesError}
+        </p>
+      )}
       {favoriteError && (
         <p role='alert' className='px-4 pb-2 text-sm text-destructive'>
           {favoriteError}
@@ -2629,7 +2923,19 @@ export function ContentWorkspace({ scope }: { scope: ContentScope }) {
             {!mobile && viewMode === 'table'
               ? renderTable(visible.slice(0, renderLimit))
               : renderMasonry(visible.slice(0, renderLimit))}
-            {visible.length > renderLimit && <Button variant='outline' onClick={() => setPagination({ key: paginationKey, limit: renderLimit + 100 })}>加载更多（已显示 {renderLimit} / {visible.length} 条）</Button>}
+            {visible.length > renderLimit && (
+              <Button
+                variant='outline'
+                onClick={() =>
+                  setPagination({
+                    key: paginationKey,
+                    limit: renderLimit + 100,
+                  })
+                }
+              >
+                加载更多（已显示 {renderLimit} / {visible.length} 条）
+              </Button>
+            )}
           </div>
         )}
       </div>

@@ -1745,6 +1745,134 @@ export function createTikHubYouTubeTranscriptProvider(options: {
   }
 }
 
+export interface YouTubeVideoAssets {
+  transcript?: {
+    text: string
+    languageCode: string
+    format: 'txt' | 'srt'
+  }
+  media?: {
+    url: string
+    itag: number
+    quality: string
+    mimeType: string
+    expiresInSeconds?: number
+  }
+  hlsManifestUrl?: string
+  durationSeconds?: number
+  title?: string
+}
+
+/**
+ * 一次调用 TikHub API，同时拿到 YouTube 视频的字幕和最佳直链。
+ * 供前端"获取视频素材"按钮触发，替代 resolve 阶段的自动字幕抓取。
+ */
+export async function fetchTikHubYouTubeVideoAssets(options: {
+  videoId: string
+  token: string
+  fetch?: typeof fetch
+  baseUrl?: string
+  captureResponse?: CaptureProviderResponse
+  preferredLanguages?: string[]
+}): Promise<YouTubeVideoAssets> {
+  const fetcher = options.fetch ?? fetch
+  const baseUrl = options.baseUrl ?? 'https://api.tikhub.io'
+  const authHeaders = { Authorization: `Bearer ${options.token}` }
+  const transcriptProvider = createTikHubYouTubeTranscriptProvider({
+    token: options.token,
+    fetch: fetcher,
+    baseUrl,
+    preferredLanguages: options.preferredLanguages,
+    captureResponse: options.captureResponse,
+  })
+  // 1. 拿字幕（txt + srt 两份）
+  const transcriptResult = await transcriptProvider.fetchTranscript(
+    options.videoId
+  )
+  let transcript: YouTubeVideoAssets['transcript']
+  if (
+    transcriptResult.status === 'available' &&
+    transcriptResult.text?.trim() &&
+    transcriptResult.languageCode
+  ) {
+    transcript = {
+      text: transcriptResult.text,
+      languageCode: transcriptResult.languageCode,
+      format: 'txt',
+    }
+  }
+  // 2. 拿媒体直链（get_video_streams_v2 一次返回所有已解密 URL）
+  const streamsUrl = new URL(
+    '/api/v1/youtube/web_v2/get_video_streams_v2',
+    baseUrl
+  )
+  streamsUrl.searchParams.set('video_id', options.videoId)
+  const streamsPayload = await fetchJson(
+    fetcher,
+    streamsUrl,
+    { headers: authHeaders },
+    {
+      providerId: 'tikhub-youtube-streams',
+      callback: options.captureResponse,
+    }
+  )
+  assertTikHubSuccess(streamsPayload)
+  const streamsData = record(streamsPayload.data)
+  const media = pickBestCombinedFormat(streamsData)
+  return {
+    transcript,
+    media,
+    hlsManifestUrl: text(streamsData.hls_manifest_url),
+    durationSeconds:
+      typeof streamsData.duration_seconds === 'number'
+        ? streamsData.duration_seconds
+        : durationSeconds(streamsData.duration),
+    title: text(streamsData.title),
+  }
+}
+
+function pickBestCombinedFormat(
+  data: Record<string, unknown>
+): YouTubeVideoAssets['media'] | undefined {
+  const formats = array(data.formats)
+  const standard = formats.map((value) => record(value))
+  // 优先找已解密（has_signature=false）、有 url、视频+音频合并的格式
+  const candidates = standard.filter((format) => {
+    const url = text(format.url)
+    const hasSignature =
+      typeof format.has_signature === 'boolean' ? format.has_signature : false
+    return url && !hasSignature
+  })
+  if (!candidates.length) return undefined
+  // 按 resolution 降序、itag 降序挑最高质量
+  const ranked = candidates.sort((a, b) => {
+    const resolutionA = parseResolution(text(a.resolution))
+    const resolutionB = parseResolution(text(b.resolution))
+    if (resolutionB !== resolutionA) return resolutionB - resolutionA
+    const itagA = Number(a.itag) || 0
+    const itagB = Number(b.itag) || 0
+    return itagB - itagA
+  })
+  const best = ranked[0]!
+  const itag = Number(best.itag)
+  return {
+    url: text(best.url)!,
+    itag: Number.isInteger(itag) ? itag : 0,
+    quality: text(best.quality_label ?? best.quality) ?? '',
+    mimeType: text(best.mime_type ?? best.mimeType) ?? '',
+    expiresInSeconds:
+      typeof best.expires_in_seconds === 'number'
+        ? best.expires_in_seconds
+        : undefined,
+  }
+}
+
+function parseResolution(value?: string | null): number {
+  if (!value) return 0
+  const match = /(\d+)/u.exec(value)
+  return match ? Number(match[1]) : 0
+}
+
 export function decideVideoEnrichment(input: {
   hasTranscript: boolean
   durationSeconds?: number

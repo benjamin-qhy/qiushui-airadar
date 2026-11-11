@@ -9,6 +9,7 @@ const filterKeys = [
   'dateFrom',
   'dateTo',
   'datePreset',
+  'dateField',
   'tag',
   'kind',
   'sourceType',
@@ -49,8 +50,16 @@ export function readContentFilters(
   if (params.get('filters') !== '1')
     return resolveDatePreset({ ...defaults, recommendation: 'all' })
   const filters = { ...defaults }
-  for (const key of filterKeys) filters[key] = params.get(key) ?? ''
-  return resolveDatePreset({ ...filters, recommendation: 'all' })
+  for (const key of filterKeys) {
+    if (key === 'dateField') continue
+    filters[key] = params.get(key) ?? ''
+  }
+  const dateField = params.get('dateField')
+  return resolveDatePreset({
+    ...filters,
+    dateField: dateField === 'collected' ? 'collected' : 'published',
+    recommendation: 'all',
+  })
 }
 export function writeContentFilters(url: URL, filters: ContentFilters): URL {
   const target = new URL(url)

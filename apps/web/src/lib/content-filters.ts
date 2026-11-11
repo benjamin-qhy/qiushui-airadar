@@ -28,6 +28,7 @@ export interface ContentFilters {
   dateFrom: string
   dateTo: string
   datePreset?: string
+  dateField?: 'published' | 'collected'
   tag?: string
   kind?: string
   sourceType?: string
@@ -85,14 +86,16 @@ export function filterContentItems(
     (range) => range.id === filters.scoreRange
   )
   return items.filter((item) => {
-    const displayDate = localDateKey(contentDate(item)?.value)
+    const displayDate = localDateKey(
+      filters.dateField === 'collected'
+        ? item.firstInflowAt
+        : contentDate(item)?.value
+    )
     return (
       (filters.scoreRange === 'unscored'
         ? item.totalScore === null
         : !scoreRange ||
-          (item.totalScore !== null &&
-            item.totalScore >= scoreRange.min &&
-            item.totalScore <= scoreRange.max)) &&
+          (item.totalScore !== null && item.totalScore >= scoreRange.min)) &&
       (!query ||
         `${item.title} ${item.chineseTitle ?? ''} ${item.summary} ${item.keywordsText ?? ''} ${item.unprocessedReason ?? ''} ${item.source?.name ?? ''}`
           .toLowerCase()

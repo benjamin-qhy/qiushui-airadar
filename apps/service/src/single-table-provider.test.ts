@@ -182,21 +182,16 @@ it('uses local X video transcription only when a transcriber is supplied', async
   })
 })
 
-it('uses platform captions for a YouTube video discovered from X', async () => {
+it('uses video description as body for a YouTube video discovered from X', async () => {
   const calls: string[] = []
   const provider = createSingleTableSourceProvider({
     tikHubToken: 'test-only',
     fetch: async (url) => {
       calls.push(String(url))
-      return calls.length === 1
-        ? Response.json({
-            code: 200,
-            data: { captions: [{ language_code: 'en' }] },
-          })
-        : Response.json({
-            code: 200,
-            data: { text: 'Complete caption text from YouTube.' },
-          })
+      return Response.json({
+        code: 200,
+        data: { text: 'Should not be called — resolve no longer fetches captions.' },
+      })
     },
   })
   const resolved = await provider.resolve(
@@ -213,11 +208,16 @@ it('uses platform captions for a YouTube video discovered from X', async () => {
       url: 'https://www.youtube.com/watch?v=oVKGKdIAgtg',
       title: 'Linked video',
       kind: 'video',
+      body: 'YouTube video description text used as analysis body.',
     }
   )
-  expect(resolved.original.body).toBe('Complete caption text from YouTube.')
-  expect(calls).toHaveLength(2)
-  expect(calls[0]).toContain('oVKGKdIAgtg')
+  // YouTube 视频 resolve 阶段只用简介，不再调字幕 API
+  expect(resolved.original.body).toBe(
+    'YouTube video description text used as analysis body.'
+  )
+  expect(resolved.original.format).toBe('plain_text')
+  // 不再触发任何 TikHub 字幕请求
+  expect(calls).toHaveLength(0)
 })
 
 it('discovers one RSS page, fetches article body, and records both requests and responses', async () => {
@@ -479,7 +479,7 @@ it('falls back to native HTTP when the configured X article provider fails', asy
   expect(resolved.calls?.[0]?.response).toMatchObject({ status: 503 })
 })
 
-it('keeps Chinese caption language and never automatically transcribes missing YouTube captions', async () => {
+it('YouTube video resolve uses description body and skips automatic caption fetch', async () => {
   const source = {
     id: 'yt',
     platform: 'youtube',
@@ -492,31 +492,26 @@ it('keeps Chinese caption language and never automatically transcribes missing Y
     externalId: 'oVKGKdIAgtg',
     kind: 'video' as const,
     url: 'https://www.youtube.com/watch?v=oVKGKdIAgtg',
+    body: 'YouTube video description.',
   }
   let transcriptions = 0
-  const missing = createSingleTableSourceProvider({
+  let apiCalls = 0
+  const provider = createSingleTableSourceProvider({
     tikHubToken: 'test',
-    fetch: async () => Response.json({ code: 200, data: { captions: [] } }),
+    fetch: async () => {
+      apiCalls++
+      return Response.json({ code: 200, data: { captions: [] } })
+    },
     xVideoTranscriber: async () => {
       transcriptions++
       return 'unexpected'
     },
   })
-  await expect(missing.resolve(source, item)).rejects.toThrow(
-    'manual transcription required'
-  )
+  // resolve 阶段不再调字幕 API，直接用 item.body（简介）
+  const resolved = await provider.resolve(source, item)
+  expect(resolved.original.body).toBe('YouTube video description.')
+  expect(resolved.original.format).toBe('plain_text')
+  expect(resolved.original.language).toBe('en')
   expect(transcriptions).toBe(0)
-  let calls = 0
-  const chinese = createSingleTableSourceProvider({
-    tikHubToken: 'test',
-    fetch: async () =>
-      Response.json({
-        code: 200,
-        data:
-          ++calls === 1
-            ? { captions: [{ language_code: 'zh-Hans' }] }
-            : { text: '原始中文字幕。' },
-      }),
-  })
-  expect((await chinese.resolve(source, item)).original.language).toBe('zh')
+  expect(apiCalls).toBe(0)
 })

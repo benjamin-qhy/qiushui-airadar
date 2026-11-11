@@ -453,6 +453,25 @@ function render(template: string, variables: Record<string, string>): string {
   })
 }
 
+export function renderPromptMarkdown(
+  markdown: string,
+  variables: Record<string, string>
+): { system: string; user: string } {
+  const system = getMarkdownSection(
+    markdown,
+    '发给模型的系统提示词',
+    '发给模型的用户提示词模板'
+  )
+  return { system, user: render(promptTemplate(markdown), variables) }
+}
+
+export function parseTranslationResponse(text: string): {
+  chineseTitle: string | null
+  chineseBody: string
+} {
+  return translationSchema.parse(parseModelJson(text))
+}
+
 function parseFrontmatter(markdown: string): {
   attributes: unknown
   body: string
@@ -851,7 +870,11 @@ export async function processSingleTableContent(
     post
   )
   if (original.language !== 'en') return scored
-  if (original.kind === 'video' && analysisCall.value.attentionScore <= 60)
+  if (
+    original.kind === 'video' &&
+    original.format !== 'plain_text' &&
+    analysisCall.value.attentionScore <= 60
+  )
     return options.repository.setTranslationSkipped(
       row.id,
       'below_score_threshold'
@@ -867,12 +890,17 @@ export async function processSingleTableContent(
       kind: original.kind,
       videoDurationSeconds: original.videoDurationSeconds,
     },
-    original.platform === 'youtube'
-      ? { maximumVideoDurationSeconds: 1800, maximumSourceCharacters: Infinity }
-      : (options.automaticTranslationLimits ?? {
-          maximumVideoDurationSeconds: 1_800,
-          maximumSourceCharacters: 27_000,
-        })
+    original.kind === 'video' && original.format === 'plain_text'
+      ? {
+          maximumVideoDurationSeconds: Infinity,
+          maximumSourceCharacters: Infinity,
+        }
+      : original.platform === 'youtube'
+        ? { maximumVideoDurationSeconds: 1800, maximumSourceCharacters: Infinity }
+        : (options.automaticTranslationLimits ?? {
+            maximumVideoDurationSeconds: 1_800,
+            maximumSourceCharacters: 27_000,
+          })
   )
   if (skipReason)
     return options.repository.setTranslationSkipped(row.id, skipReason)
@@ -907,7 +935,11 @@ export async function translateSingleTableContent(
     row.translated_to_chinese
   )
     throw new Error('Content does not qualify for translation')
-  if (!options.manual && original.kind === 'video') {
+  if (
+    !options.manual &&
+    original.kind === 'video' &&
+    original.format !== 'plain_text'
+  ) {
     if (row.total_score == null || row.total_score <= 60)
       return options.repository.setTranslationSkipped(
         row.id,

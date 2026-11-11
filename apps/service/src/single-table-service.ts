@@ -31,6 +31,7 @@ import {
 } from '@qiushui-airadar/runtime'
 import {
   classifyUnprocessedContent,
+  fetchTikHubYouTubeVideoAssets,
   normalizeYouTubeIdentity,
 } from '@qiushui-airadar/source-adapters'
 import {
@@ -42,7 +43,9 @@ import {
   listSingleTableModelProviders,
   listSingleTableModels,
   normalizeSingleTableProviderId,
+  parseTranslationResponse,
   processSingleTableContent,
+  renderPromptMarkdown,
   translateSingleTableContent,
   type SingleTableModelGateway,
 } from '@qiushui-airadar/pipeline'
@@ -371,6 +374,7 @@ async function feedItem(
   return {
     id: row.id,
     title: row.title,
+    originalTitle: row.original_title ?? undefined,
     chineseTitle: row.chinese_title ?? undefined,
     url: row.canonical_url ?? undefined,
     publishedAt: row.published_at ?? undefined,
@@ -436,16 +440,62 @@ async function feedItem(
     repostedBy: row.reposted_by_json
       ? JSON.parse(String(row.reposted_by_json))
       : undefined,
-    video:
-      row.video_duration_seconds ||
-      row.video_thumbnail_url ||
-      row.video_media_url
-        ? {
-            durationSeconds: row.video_duration_seconds,
-            thumbnailUrl: row.video_thumbnail_url,
-            mediaUrl: row.video_media_url,
-          }
-        : undefined,
+    video: (() => {
+      const extra = JSON.parse(String(row.analysis_extra_json || '{}')) as Record<
+        string,
+        unknown
+      >
+      const videoAssets =
+        extra.videoAssets && typeof extra.videoAssets === 'object'
+          ? (extra.videoAssets as Record<string, unknown>)
+          : undefined
+      const transcript =
+        videoAssets?.transcript && typeof videoAssets.transcript === 'object'
+          ? (videoAssets.transcript as {
+              text?: string
+              languageCode?: string
+              format?: 'txt' | 'srt'
+            })
+          : undefined
+      const base = {
+        durationSeconds: row.video_duration_seconds,
+        thumbnailUrl: row.video_thumbnail_url,
+        mediaUrl: row.video_media_url,
+        ...(videoAssets?.mediaQuality
+          ? { mediaQuality: String(videoAssets.mediaQuality) }
+          : {}),
+        ...(videoAssets?.mediaMimeType
+          ? { mediaMimeType: String(videoAssets.mediaMimeType) }
+          : {}),
+        ...(videoAssets?.hlsManifestUrl
+          ? { hlsManifestUrl: String(videoAssets.hlsManifestUrl) }
+          : {}),
+        ...(videoAssets?.fetchedAt
+          ? { assetsFetchedAt: String(videoAssets.fetchedAt) }
+          : {}),
+        ...(transcript?.text ? { transcriptText: transcript.text } : {}),
+        ...(transcript?.languageCode
+          ? { transcriptLanguage: transcript.languageCode }
+          : {}),
+        ...(transcript?.format
+          ? { transcriptFormat: transcript.format }
+          : {}),
+        ...(typeof videoAssets?.transcriptChinese === 'string'
+          ? { transcriptChinese: videoAssets.transcriptChinese }
+          : {}),
+        ...(typeof videoAssets?.transcriptChineseFetchedAt === 'string'
+          ? { transcriptChineseFetchedAt: videoAssets.transcriptChineseFetchedAt }
+          : {}),
+      }
+      if (
+        !base.durationSeconds &&
+        !base.thumbnailUrl &&
+        !base.mediaUrl &&
+        !base.transcriptText
+      )
+        return undefined
+      return base
+    })(),
     processStatus: row.is_unprocessed ? 'unprocessed' : row.process_status,
     unprocessedReason: row.unprocessed_reason ?? undefined,
     originalStatus: row.original_status,
@@ -542,6 +592,10 @@ export function createSingleTableServiceApp(options: {
   const retrying = new Set<string>()
   const translating = new Set<string>()
   const translationTasks = new Set<Promise<unknown>>()
+  const fetchingVideoAssets = new Set<string>()
+  const fetchingVideoAssetTasks = new Set<Promise<unknown>>()
+  const translatingTranscript = new Set<string>()
+  const translatingTranscriptTasks = new Set<Promise<unknown>>()
   let collection: Promise<unknown> | undefined
   let collectionControl: CollectionControl | undefined
   type RetryBatch = {
@@ -2187,6 +2241,160 @@ export function createSingleTableServiceApp(options: {
                   translationTasks.delete(translationTask)
                 })
               translationTasks.add(translationTask)
+              return send(response, 202, { taskId: id })
+            }
+            const fetchAssetsMatch =
+              /^\/api\/contents\/([^/]+)\/fetch-video-assets$/u.exec(
+                url.pathname
+              )
+            if (fetchAssetsMatch) {
+              await bodyOf(request)
+              const id = decodeURIComponent(fetchAssetsMatch[1]!)
+              const row = activeRepository.getById(id)
+              if (!row)
+                return send(response, 404, { error: 'content_not_found' })
+              if (row.content_kind !== 'video')
+                return send(response, 409, {
+                  error: 'not_a_video_content',
+                })
+              const externalId = row.external_content_id
+              if (!externalId)
+                return send(response, 409, {
+                  error: 'no_external_video_id',
+                })
+              let videoId: string = String(externalId)
+              if (row.source_platform !== 'youtube' && row.canonical_url) {
+                const parsed = normalizeYouTubeIdentity(
+                  String(row.canonical_url)
+                )
+                if (parsed.videoId) videoId = parsed.videoId
+              }
+              const reader = createFileSecretReader(
+                options.secretFile ?? path.join(options.dataRoot, '.env')
+              )
+              const credential = async (name: string): Promise<string | undefined> =>
+                reader.get(name).catch((error: unknown) => {
+                  if ((error as NodeJS.ErrnoException).code === 'ENOENT')
+                    return undefined
+                  throw error
+                })
+              const tikHubToken = await credential('TIKHUB_API_KEY')
+              if (!tikHubToken)
+                return send(response, 409, {
+                  error: 'tikhub_token_missing',
+                })
+              const token: string = tikHubToken
+              if (fetchingVideoAssets.has(id))
+                return send(response, 409, {
+                  error: 'fetch_already_running',
+                })
+              fetchingVideoAssets.add(id)
+              const assetTask = fetchTikHubYouTubeVideoAssets({
+                videoId,
+                token,
+              })
+                .then(async (assets) => {
+                  if (!assets.transcript && !assets.media)
+                    throw new Error('neither transcript nor media was fetched')
+                  await activeRepository.saveVideoAssets(id, {
+                    transcript: assets.transcript,
+                    mediaUrl: assets.media?.url,
+                    mediaItag: assets.media?.itag,
+                    mediaQuality: assets.media?.quality,
+                    mediaMimeType: assets.media?.mimeType,
+                    mediaExpiresInSeconds: assets.media?.expiresInSeconds,
+                    hlsManifestUrl: assets.hlsManifestUrl,
+                    fetchedAt: new Date().toISOString(),
+                  })
+                  return assets
+                })
+                .catch((error: unknown) => ({
+                  error: error instanceof Error ? error.message : String(error),
+                }))
+                .finally(() => {
+                  fetchingVideoAssets.delete(id)
+                })
+              fetchingVideoAssetTasks.add(assetTask)
+              assetTask.then((_result) => {
+                fetchingVideoAssetTasks.delete(assetTask)
+              })
+              return send(response, 202, { taskId: id })
+            }
+            const translateTranscriptMatch =
+              /^\/api\/contents\/([^/]+)\/transcribe-video-transcript$/u.exec(
+                url.pathname
+              )
+            if (translateTranscriptMatch) {
+              await bodyOf(request)
+              const id = decodeURIComponent(translateTranscriptMatch[1]!)
+              const row = activeRepository.getById(id)
+              if (!row)
+                return send(response, 404, { error: 'content_not_found' })
+              if (row.content_kind !== 'video')
+                return send(response, 409, {
+                  error: 'not_a_video_content',
+                })
+              const stored = activeRepository.readVideoAssetsTranscript(id)
+              if (!stored.transcriptText)
+                return send(response, 409, {
+                  error: 'transcript_missing_fetch_assets_first',
+                })
+              if (translatingTranscript.has(id))
+                return send(response, 409, {
+                  error: 'translation_already_running',
+                })
+              const config = await loadSingleTableConfig(options.configRoot)
+              const gateway =
+                options.gateway ??
+                createSingleTableModelGateway(
+                  credentialStore,
+                  config.analysis.model.provider,
+                  config.analysis.model,
+                  await ollamaProviderConfig()
+                )
+              const promptPath = path.resolve(
+                import.meta.dirname,
+                '../../../docs/prompts/single-table-content/03-英文内容意译.md'
+              )
+              const promptTemplate = await readFile(promptPath, 'utf-8')
+              translatingTranscript.add(id)
+              const transcriptTask = (async () => {
+                const prompt = renderPromptMarkdown(promptTemplate, {
+                  original_title_or_none: row.original_title
+                    ? `《${row.original_title}》`
+                    : '无',
+                  content_kind: 'video',
+                  source_format: 'subtitle',
+                  translation_chunk_position: '1/1（全部字幕）',
+                  previous_translation_tail: '无',
+                  english_body: stored.transcriptText!,
+                })
+                const completion = await gateway.complete({
+                  system: prompt.system,
+                  user: prompt.user,
+                  stage: 'translate',
+                })
+                const parsed = parseTranslationResponse(completion.text)
+                await activeRepository.saveVideoTranscriptTranslation(
+                  id,
+                  parsed.chineseBody.trim(),
+                  {
+                    provider: config.analysis.model.provider,
+                    model:
+                      (config.analysis.model as { name?: string }).name ??
+                      config.analysis.model.default,
+                    manual: true,
+                  }
+                )
+              })()
+                .catch((error) => {
+                  console.error('video transcript translation failed', error)
+                })
+                .finally(() => {
+                  translatingTranscript.delete(id)
+                  translatingTranscriptTasks.delete(transcriptTask)
+                })
+              translatingTranscriptTasks.add(transcriptTask)
               return send(response, 202, { taskId: id })
             }
             const retryMatch = /^\/api\/contents\/([^/]+)\/retry$/u.exec(

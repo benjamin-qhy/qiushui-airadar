@@ -17,6 +17,7 @@ export type UtilizationAction =
 export interface FeedItem {
   id: string
   title: string
+  originalTitle?: string
   chineseTitle?: string
   url?: string
   publishedAt?: string
@@ -69,6 +70,15 @@ export interface FeedItem {
     durationSeconds?: number
     thumbnailUrl?: string
     mediaUrl?: string
+    mediaQuality?: string
+    mediaMimeType?: string
+    hlsManifestUrl?: string
+    assetsFetchedAt?: string
+    transcriptText?: string
+    transcriptLanguage?: string
+    transcriptFormat?: 'txt' | 'srt'
+    transcriptChinese?: string
+    transcriptChineseFetchedAt?: string
   }
   unprocessedReason?: string
   processStatus:

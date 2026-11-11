@@ -567,36 +567,9 @@ export function createSingleTableSourceProvider(
         } else if (source.platform !== 'youtube' && !youtubeVideoId) {
           throw new Error('Video captions provider is unavailable')
         } else {
-          const errors: string[] = []
-          for (const id of options.providerRoutes?.youtube_captions ??
-            defaultProviderRoutes.youtube_captions) {
-            try {
-              if (id !== 'tikhub-youtube')
-                throw new Error('provider is not supported')
-              if (!options.tikHubToken)
-                throw new Error('credential is not configured')
-              const captions = await createTikHubYouTubeTranscriptProvider({
-                token: options.tikHubToken,
-                fetch: trackedFetch,
-              }).fetchTranscript(youtubeVideoId ?? item.externalId)
-              if (captions.status !== 'available' || !captions.text?.trim())
-                throw new Error(
-                  `captions are ${captions.status}; manual transcription required`
-                )
-              body = captions.text
-              if (captions.languageCode)
-                language = /^zh(?:-|$)/iu.test(captions.languageCode)
-                  ? 'zh'
-                  : 'en'
-              break
-            } catch (error) {
-              errors.push(
-                `${id}: ${error instanceof Error ? error.message : String(error)}`
-              )
-            }
-          }
-          if (!body) throw routeFailure('youtube_captions', errors)
-          format = 'subtitle'
+          // YouTube 视频：resolve 阶段只用简介（item.body = snippet.description），
+          // 不再自动拉取字幕。字幕和媒体直链改为用户在前端手动触发获取。
+          // 见后端接口 fetch-video-assets。
         }
       } else if (sourceItem?.thread) {
         if (!sourceItem.thread.complete)

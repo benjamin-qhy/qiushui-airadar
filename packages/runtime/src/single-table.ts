@@ -1753,4 +1753,146 @@ export class SingleTableRepository {
       )
       .all() as unknown as RuntimeLogDocument[]
   }
+
+  async saveVideoAssets(
+    id: string,
+    input: {
+      transcript?: {
+        text: string
+        languageCode: string
+        format: 'txt' | 'srt'
+      }
+      transcriptChinese?: string
+      mediaUrl?: string
+      thumbnailUrl?: string
+      mediaItag?: number
+      mediaQuality?: string
+      mediaMimeType?: string
+      mediaExpiresInSeconds?: number
+      hlsManifestUrl?: string
+      fetchedAt?: string
+    }
+  ): Promise<ContentRow> {
+    const row = this.getById(id)
+    if (!row) throw new Error('Content not found')
+    const now = new Date().toISOString()
+    const fetchedAt = input.fetchedAt ?? now
+    const assetsPatch: Record<string, unknown> = {
+      videoAssets: {
+        fetchedAt,
+        ...(input.transcript ? { transcript: input.transcript } : {}),
+        ...(input.transcriptChinese
+          ? { transcriptChinese: input.transcriptChinese }
+          : {}),
+        ...(input.hlsManifestUrl
+          ? { hlsManifestUrl: input.hlsManifestUrl }
+          : {}),
+        ...(input.mediaItag ? { mediaItag: input.mediaItag } : {}),
+        ...(input.mediaQuality ? { mediaQuality: input.mediaQuality } : {}),
+        ...(input.mediaMimeType ? { mediaMimeType: input.mediaMimeType } : {}),
+        ...(input.mediaExpiresInSeconds
+          ? { mediaExpiresInSeconds: input.mediaExpiresInSeconds }
+          : {}),
+      },
+    }
+    const mediaColumns: Array<[string, string]> = []
+    if (input.mediaUrl) mediaColumns.push(['video_media_url', input.mediaUrl])
+    if (input.thumbnailUrl)
+      mediaColumns.push(['video_thumbnail_url', input.thumbnailUrl])
+    const mediaSql = mediaColumns.length
+      ? mediaColumns.map(([col]) => `${col}=?`).join(', ') + ', '
+      : ''
+    this.database
+      .prepare(
+        `UPDATE contents SET analysis_extra_json=json_patch(analysis_extra_json, ?),
+      ${mediaSql}updated_at=? WHERE id=?`
+      )
+      .run(
+        JSON.stringify(assetsPatch),
+        ...mediaColumns.map(([, v]) => v),
+        now,
+        id
+      )
+    await this.appendLog(id, {
+      action: 'video-assets',
+      stage: 'completed',
+      status: 'succeeded',
+      trigger: 'manual-action',
+      request: {
+        hasTranscript: Boolean(input.transcript?.text),
+        transcriptLanguage: input.transcript?.languageCode,
+        hasMediaUrl: Boolean(input.mediaUrl),
+      },
+      response: { updated: true },
+    })
+    return this.getById(id)!
+  }
+
+  readVideoAssetsTranscript(id: string): {
+    transcriptText?: string
+    transcriptLanguage?: string
+    transcriptChinese?: string
+  } {
+    const row = this.getById(id)
+    if (!row) throw new Error('Content not found')
+    let extra: Record<string, unknown>
+    try {
+      extra = JSON.parse(String(row.analysis_extra_json || '{}'))
+    } catch {
+      return {}
+    }
+    const assets =
+      (extra.videoAssets && typeof extra.videoAssets === 'object'
+        ? (extra.videoAssets as Record<string, unknown>)
+        : {})
+    const transcript =
+      (assets.transcript && typeof assets.transcript === 'object'
+        ? (assets.transcript as Record<string, unknown>)
+        : {})
+    const transcriptText =
+      typeof transcript.text === 'string' ? transcript.text : undefined
+    const transcriptLanguage =
+      typeof transcript.language_code === 'string'
+        ? transcript.language_code
+        : typeof transcript.languageCode === 'string'
+          ? transcript.languageCode
+          : undefined
+    const transcriptChinese =
+      typeof assets.transcriptChinese === 'string'
+        ? assets.transcriptChinese
+        : undefined
+    return { transcriptText, transcriptLanguage, transcriptChinese }
+  }
+
+  async saveVideoTranscriptTranslation(
+    id: string,
+    translated: string,
+    metadata?: { provider?: string; model?: string; manual?: boolean }
+  ): Promise<ContentRow> {
+    const row = this.getById(id)
+    if (!row) throw new Error('Content not found')
+    const now = new Date().toISOString()
+    const patch: Record<string, unknown> = {
+      videoAssets: {
+        transcriptChinese: translated,
+        transcriptChineseFetchedAt: now,
+        ...(metadata ? { transcriptChineseMetadata: metadata } : {}),
+      },
+    }
+    this.database
+      .prepare(
+        `UPDATE contents SET analysis_extra_json=json_patch(analysis_extra_json, ?),
+      updated_at=? WHERE id=?`
+      )
+      .run(JSON.stringify(patch), now, id)
+    await this.appendLog(id, {
+      action: 'video-transcript-translate',
+      stage: 'translating',
+      status: 'succeeded',
+      trigger: 'manual-action',
+      request: { provider: metadata?.provider, model: metadata?.model },
+      response: { updated: true },
+    })
+    return this.getById(id)!
+  }
 }

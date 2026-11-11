@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import { filterContentItems, type ContentFilters } from './content-filters'
-import { readContentFilters, resolveDatePreset, writeContentFilters } from './content-location'
+import {
+  readContentFilters,
+  resolveDatePreset,
+  writeContentFilters,
+} from './content-location'
 import type { FeedItem } from '../types'
 
 const defaults: ContentFilters = {
@@ -151,26 +155,75 @@ it.each([
   }
 )
 
-
 it('uses platform publication date first and first collection as the stable fallback', () => {
   const items = [
-    { ...base, id: 'old-publication', publishedAt: '2020-01-01T12:00:00+08:00' },
-    { ...base, id: 'recent-publication', publishedAt: '2026-11-09T12:00:00+08:00', firstInflowAt: '2026-11-10T12:00:00+08:00' },
-    { ...base, id: 'collection-fallback', discoveredAt: '2026-11-10T12:00:00+08:00' },
+    {
+      ...base,
+      id: 'old-publication',
+      publishedAt: '2020-01-01T12:00:00+08:00',
+    },
+    {
+      ...base,
+      id: 'recent-publication',
+      publishedAt: '2026-11-09T12:00:00+08:00',
+      firstInflowAt: '2026-11-10T12:00:00+08:00',
+    },
+    {
+      ...base,
+      id: 'collection-fallback',
+      discoveredAt: '2026-11-10T12:00:00+08:00',
+    },
     { ...base, id: 'invalid-publication', publishedAt: 'invalid' },
   ]
-  expect(filterContentItems(items, { ...defaults, dateFrom: '2026-11-09', dateTo: '2026-11-09' }).map(item => item.id))
-    .toEqual(['recent-publication', 'collection-fallback', 'invalid-publication'])
+  expect(
+    filterContentItems(items, {
+      ...defaults,
+      dateFrom: '2026-11-09',
+      dateTo: '2026-11-09',
+    }).map((item) => item.id)
+  ).toEqual([
+    'recent-publication',
+    'collection-fallback',
+    'invalid-publication',
+  ])
 })
 
-it('filters inclusive score boundaries and keeps unscored separate while combining other filters', () => {
+it('filters by score threshold and keeps unscored separate while combining other filters', () => {
   const ranges = [{ id: 'high', min: 80, max: 89 }]
-  const items = [null, 0, 79, 80, 89, 90, 100].map((totalScore, i) => ({ ...base, id: String(i), totalScore }))
-  expect(filterContentItems(items, { ...defaults, scoreRange: 'high' }, ranges).map(item => item.totalScore)).toEqual([80, 89])
-  expect(filterContentItems(items, { ...defaults, scoreRange: 'unscored' }, ranges).map(item => item.totalScore)).toEqual([null])
-  expect(filterContentItems(items, { ...defaults, scoreRange: 'all' }, ranges)).toHaveLength(7)
-  expect(filterContentItems(items, { ...defaults, scoreRange: 'high', query: '不存在' }, ranges)).toEqual([])
-  expect(filterContentItems(items, { ...defaults, scoreRange: 'deleted-range' }, ranges)).toHaveLength(7)
+  const items = [null, 0, 79, 80, 89, 90, 100].map((totalScore, i) => ({
+    ...base,
+    id: String(i),
+    totalScore,
+  }))
+  expect(
+    filterContentItems(items, { ...defaults, scoreRange: 'high' }, ranges).map(
+      (item) => item.totalScore
+    )
+  ).toEqual([80, 89, 90, 100])
+  expect(
+    filterContentItems(
+      items,
+      { ...defaults, scoreRange: 'unscored' },
+      ranges
+    ).map((item) => item.totalScore)
+  ).toEqual([null])
+  expect(
+    filterContentItems(items, { ...defaults, scoreRange: 'all' }, ranges)
+  ).toHaveLength(7)
+  expect(
+    filterContentItems(
+      items,
+      { ...defaults, scoreRange: 'high', query: '不存在' },
+      ranges
+    )
+  ).toEqual([])
+  expect(
+    filterContentItems(
+      items,
+      { ...defaults, scoreRange: 'deleted-range' },
+      ranges
+    )
+  ).toHaveLength(7)
 })
 
 it('shares selected score ranges in URLs and restores saved choices', () => {

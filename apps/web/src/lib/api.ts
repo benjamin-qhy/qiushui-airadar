@@ -12,6 +12,10 @@ export async function api<T>(path: string, init?: RequestInit): Promise<T> {
   return response.json() as Promise<T>
 }
 
+export function get<T>(path: string): Promise<T> {
+  return api<T>(path)
+}
+
 export function post<T>(path: string, body: unknown): Promise<T> {
   return api<T>(path, { method: 'POST', body: JSON.stringify(body) })
 }

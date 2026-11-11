@@ -264,8 +264,8 @@ describe('complete web shell', () => {
     }
     expect(html).toContain('aria-label="复制 AI 总结"')
     expect(html).not.toContain('看完能获得什么')
-    expect(html.indexOf('内容标签</h3>')).toBeLessThan(
-      html.indexOf('AI 总结</h3>')
+    expect(html.indexOf('>AI 总结</button>')).toBeLessThan(
+      html.indexOf('>中文</button>')
     )
     for (const action of ['做卡片', '做视频', '写文章', '建项目']) {
       expect(html).not.toContain(action)
@@ -321,9 +321,9 @@ describe('complete web shell', () => {
     expect(html).toContain('AI 总结')
     expect(html).toContain('中文')
     expect(html).not.toContain('>英文</button>')
-    expect(html).toContain(
-      '暂无互动数据</span><span class="whitespace-nowrap">发布时间未知'
-    )
+    expect(html).toContain('暂无互动数据')
+    expect(html).toContain('发布 未知')
+    expect(html).toContain('采集 未知')
   })
 
   it('supports combined process, read and junk filters', () => {
