@@ -9,7 +9,7 @@ export function CollectionSettingsPage() {
     <div className='flex h-full min-h-0 flex-col'>
       <PageHeader
         title='采集设置'
-        description='设置并发数量、翻译门槛与平台接口'
+        description='设置并发数量、自动翻译与平台接口'
       />
       <div className='min-h-0 flex-1 overflow-y-auto overscroll-contain p-4 pb-24 md:p-6 lg:pb-6'>
         <div className='mx-auto max-w-[1500px]'>

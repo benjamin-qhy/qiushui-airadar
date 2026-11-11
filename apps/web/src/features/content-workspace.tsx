@@ -1,3 +1,8 @@
+import { cn } from '@/lib/utils'
+import {
+  contentCategories,
+  contentThemes,
+} from '../../../../packages/domain/src/content-tags'
 import {
   contentHref,
   followLink,
@@ -98,12 +103,13 @@ import {
 import { Textarea } from '@/components/ui/textarea'
 import { api, post } from '@/lib/api'
 import {
+  contentDate,
   filterContentItems,
   filterContentScope,
   type ContentFilters,
   type ContentScope,
 } from '@/lib/content-filters'
-import type { FeedItem, UtilizationAction } from '@/types'
+import type { FeedItem, ScoreRange, UtilizationAction } from '@/types'
 
 async function copyText(text: string): Promise<void> {
   if (navigator.clipboard?.writeText) {
@@ -223,7 +229,14 @@ function contentCover(item: FeedItem): string | undefined {
   return item.images?.[0]?.url ?? item.video?.thumbnailUrl
 }
 
+function isXPost(item: FeedItem) {
+  return (
+    item.source?.type === 'x' &&
+    (item.kind === 'short_post' || item.kind === 'image_post')
+  )
+}
 function cardContent(item: FeedItem): string {
+  if (isXPost(item) && item.postMode) return item.summary || ''
   if (item.kind === 'short_post' || item.kind === 'image_post')
     return item.chineseTranslation || item.body || item.summary || '暂无正文'
   return (
@@ -234,6 +247,39 @@ function cardContent(item: FeedItem): string {
 
 function CardBody({ item }: { item: FeedItem }) {
   const content = cardContent(item)
+  if (isXPost(item))
+    return (
+      <>
+        {content && (
+          <p className='line-clamp-5 whitespace-pre-line lg:line-clamp-4'>
+            {content}
+          </p>
+        )}
+        {!!item.images?.length && (
+          <div className='mt-2 flex gap-1 overflow-hidden'>
+            {item.images.map((image) => (
+              <img
+                key={image.url}
+                src={image.url}
+                alt='原帖配图'
+                className='h-16 min-w-0 rounded-sm object-cover'
+              />
+            ))}
+          </div>
+        )}
+        {item.quotedPost?.text && (
+          <p className='mt-2 line-clamp-2 border-l-2 pl-2 text-muted-foreground'>
+            {item.quotedPost.authorName || item.quotedPost.authorHandle} ·{' '}
+            {item.quotedPost.text}
+          </p>
+        )}
+        {item.editorialJudgment && (
+          <p className='mt-2 line-clamp-1 text-muted-foreground lg:line-clamp-none'>
+            推荐理由：{item.editorialJudgment}
+          </p>
+        )}
+      </>
+    )
   if (item.kind === 'short_post' || item.kind === 'image_post' || !item.summary)
     return <p className='whitespace-pre-wrap'>{content}</p>
   return (
@@ -294,7 +340,8 @@ const scoreLabels: Record<string, string> = {
 }
 
 function scoreLabel(item: FeedItem): string {
-  if (item.totalScore !== null) return `${item.totalScore} 分`
+  if (item.totalScore !== null)
+    return `${item.analysis?.ruleVersion === 'aihot-41cee09' ? '关注度' : '历史评分'} ${item.totalScore} 分`
   if (item.junk.isJunk || item.processStatus === 'unprocessed')
     return '不参与评分'
   if (item.processStatus !== 'completed')
@@ -484,6 +531,23 @@ function formatLocalDate(value: Date): string {
   return `${value.getFullYear()}-${pad(value.getMonth() + 1)}-${pad(value.getDate())}`
 }
 
+function ContentDate({ item }: { item: FeedItem }) {
+  const date = contentDate(item)
+  return (
+    <span
+      className='shrink-0 whitespace-nowrap'
+      title={date ? `${date.label}时间：${new Date(date.value).toLocaleString('zh-CN')}` : undefined}
+    >
+      {date
+        ? `${date.label} ${new Date(date.value).toLocaleDateString('zh-CN', {
+            month: '2-digit',
+            day: '2-digit',
+          })}`
+        : '日期未知'}
+    </span>
+  )
+}
+
 export function ContentCard({
   item,
   selected,
@@ -504,208 +568,220 @@ export function ContentCard({
   const cover = contentCover(item)
   const duration = formatDuration(item.video?.durationSeconds)
   const metrics = item.interaction
-  return (
-    <HoverCard openDelay={350} closeDelay={150}>
-      <HoverCardTrigger asChild>
-        <article
-          data-slot='content-card'
-          tabIndex={0}
-          className={`group relative flex min-w-0 cursor-pointer flex-col overflow-hidden rounded-sm border bg-card p-3 outline-none transition-colors hover:bg-foreground/[0.025] focus-visible:ring-2 focus-visible:ring-ring ${compact ? 'min-h-28' : ''} ${selected ? 'bg-foreground/[0.045]' : ''}`}
-          onClick={onOpen}
-          onKeyDown={(event) => {
-            if (
-              event.target === event.currentTarget &&
-              (event.key === 'Enter' || event.key === ' ') &&
-              onOpen
-            ) {
-              event.preventDefault()
-              onOpen()
-            }
-          }}
-        >
-          <CopyButton
-            text={cardContent(item)}
-            label='复制内容'
-            className='absolute right-2 top-2 z-10 bg-background/90 opacity-100 shadow-none transition-opacity md:opacity-0 md:group-hover:opacity-100 md:group-focus-within:opacity-100'
-          />
-          <div className='mb-2 flex min-w-0 shrink-0 items-start gap-2'>
-            <div className='min-w-0 flex-1 pr-8'>
-              <div className='flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground'>
-                {cover ? (
-                  <img
-                    src={cover}
-                    alt=''
-                    className='size-6 shrink-0 rounded-sm object-cover'
-                  />
-                ) : (
-                  <span className='flex size-6 shrink-0 items-center justify-center rounded-sm bg-muted [&>svg]:size-3.5'>
-                    <KindIcon kind={item.kind} />
-                  </span>
-                )}
-                <span className='truncate'>
-                  {href ? (
-                    <a
-                      href={href}
-                      aria-label={`查看详情：${listTitle(item)}`}
-                      onClick={(event) => {
-                        event.stopPropagation()
-                        followLink(event, () => onOpen?.())
-                      }}
-                    >
-                      {item.source?.name ?? '未知信源'}
-                    </a>
-                  ) : (
-                    (item.source?.name ?? '未知信源')
-                  )}
-                </span>
-                <span aria-hidden='true'>·</span>
-                <span className='shrink-0 font-semibold text-foreground'>
-                  {scoreLabel(item)}
-                </span>
-                {!item.read && (
-                  <span
-                    className='size-2 shrink-0 rounded-full bg-live'
-                    title='未读'
-                  />
-                )}
-              </div>
-            </div>
-          </div>
-          {item.kind !== 'short_post' && item.title && (
-            <h2 className='mb-1 line-clamp-3 shrink-0 text-base font-semibold leading-6 lg:line-clamp-2 lg:text-sm lg:leading-5 text-foreground'>
+  const card = (
+    <article
+      data-slot='content-card'
+      tabIndex={0}
+      className={`group relative flex min-w-0 cursor-pointer flex-col overflow-hidden rounded-sm border bg-card p-3 outline-none transition-colors hover:bg-foreground/[0.025] focus-visible:ring-2 focus-visible:ring-ring ${compact ? 'min-h-28' : ''} ${selected ? 'bg-foreground/[0.045]' : ''}`}
+      onClick={onOpen}
+      onKeyDown={(event) => {
+        if (
+          event.target === event.currentTarget &&
+          (event.key === 'Enter' || event.key === ' ') &&
+          onOpen
+        ) {
+          event.preventDefault()
+          onOpen()
+        }
+      }}
+    >
+      <CopyButton
+        text={cardContent(item)}
+        label='复制内容'
+        className='absolute right-2 top-2 z-10 bg-background/90 opacity-100 shadow-none transition-opacity md:opacity-0 md:group-hover:opacity-100 md:group-focus-within:opacity-100'
+      />
+      <div className='mb-2 flex min-w-0 shrink-0 items-start gap-2'>
+        <div className='min-w-0 flex-1 pr-8'>
+          <div className='flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground'>
+            {cover && !isXPost(item) ? (
+              <img
+                src={cover}
+                alt=''
+                className='size-6 shrink-0 rounded-sm object-cover'
+              />
+            ) : (
+              <span className='flex size-6 shrink-0 items-center justify-center rounded-sm bg-muted [&>svg]:size-3.5'>
+                <KindIcon kind={item.kind} />
+              </span>
+            )}
+            <span className='truncate'>
               {href ? (
                 <a
                   href={href}
+                  aria-label={`查看详情：${listTitle(item)}`}
                   onClick={(event) => {
                     event.stopPropagation()
                     followLink(event, () => onOpen?.())
                   }}
                 >
-                  {listTitle(item)}
+                  {item.source?.name ?? '未知信源'}
                 </a>
               ) : (
-                listTitle(item)
+                (item.source?.name ?? '未知信源')
               )}
-            </h2>
-          )}
-          {duration && (
-            <span className='mb-1 shrink-0 text-[11px] text-muted-foreground'>
-              {duration}
             </span>
+            <span aria-hidden='true'>·</span>
+            <span className='shrink-0 font-semibold text-foreground'>
+              {scoreLabel(item)}
+            </span>
+            {!item.read && (
+              <span
+                className='size-2 shrink-0 rounded-full bg-live'
+                title='未读'
+              />
+            )}
+          </div>
+        </div>
+      </div>
+      {item.topics.length > 0 && (
+        <div className='flex flex-wrap gap-1'>
+          {item.topics.map((tag) => (
+            <Badge key={tag} variant='outline'>
+              {tag}
+            </Badge>
+          ))}
+        </div>
+      )}
+      {!isXPost(item) && item.kind !== 'short_post' && item.title && (
+        <h2 className='mb-1 line-clamp-3 shrink-0 text-base font-semibold leading-6 lg:line-clamp-2 lg:text-sm lg:leading-5 text-foreground'>
+          {href ? (
+            <a
+              href={href}
+              onClick={(event) => {
+                event.stopPropagation()
+                followLink(event, () => onOpen?.())
+              }}
+            >
+              {listTitle(item)}
+            </a>
+          ) : (
+            listTitle(item)
           )}
-          <div className='max-h-48 overflow-hidden break-words text-sm leading-6 lg:text-xs lg:leading-5 text-foreground/85'>
-            <CardBody item={item} />
-          </div>
-          <div className='mt-auto shrink-0 pt-2'>
-            <div className='flex flex-wrap items-center justify-between gap-2 pt-2 text-xs lg:text-[11px] text-muted-foreground'>
-              <div className='flex min-w-0 flex-wrap items-center gap-2.5'>
-                {item.publishedAt && (
-                  <span className='shrink-0'>
-                    {new Date(item.publishedAt).toLocaleDateString('zh-CN', {
-                      month: '2-digit',
-                      day: '2-digit',
-                    })}
-                  </span>
-                )}
-                {!compact && (
-                  <>
-                    <Metric label='浏览' value={metrics?.views} icon={Eye} />
-                    <Metric label='点赞' value={metrics?.likes} icon={Heart} />
-                    <Metric
-                      label='评论'
-                      value={metrics?.comments}
-                      icon={MessageCircle}
-                    />
-                  </>
-                )}
-              </div>
-              <div className='flex shrink-0 items-center gap-1'>
-                {onFavorite && (
-                  <Button
-                    variant='ghost'
-                    size='icon'
-                    className='size-11 lg:size-8'
-                    aria-label={
-                      item.utilizationActions.includes('favorite')
-                        ? '取消收藏'
-                        : '收藏'
-                    }
-                    aria-pressed={item.utilizationActions.includes('favorite')}
-                    title={
-                      item.utilizationActions.includes('favorite')
-                        ? '取消收藏'
-                        : '收藏'
-                    }
-                    disabled={item.junk.isJunk || favoritePending}
-                    onClick={(event) => {
-                      event.stopPropagation()
-                      onFavorite()
-                    }}
-                  >
-                    <Bookmark
-                      className={
-                        item.utilizationActions.includes('favorite')
-                          ? 'fill-current'
-                          : ''
-                      }
-                    />
-                  </Button>
-                )}
-                {item.url && (
-                  <Button
-                    asChild
-                    variant='ghost'
-                    size='icon'
-                    className='size-11 lg:size-8'
-                    onClick={(event) => event.stopPropagation()}
-                  >
-                    <a
-                      href={item.url}
-                      target='_blank'
-                      rel='noreferrer'
-                      aria-label='打开原文'
-                      title='打开原文'
-                    >
-                      <ExternalLink />
-                    </a>
-                  </Button>
-                )}
-              </div>
-            </div>
-            {item.processStatus === 'unprocessed' && (
-              <Badge
-                variant='outline'
-                className='mt-2 max-w-full whitespace-normal text-left'
-              >
-                未处理 · {item.unprocessedReason}
-              </Badge>
+        </h2>
+      )}
+
+      {duration && (
+        <span className='mb-1 shrink-0 text-[11px] text-muted-foreground'>
+          {duration}
+        </span>
+      )}
+      <div
+        className={cn(
+          !isXPost(item) && 'max-h-48 overflow-hidden',
+          'break-words text-sm leading-6 lg:text-xs lg:leading-5 text-foreground/85'
+        )}
+      >
+        <CardBody item={item} />
+      </div>
+      <div className='mt-auto shrink-0 pt-2'>
+        <div className='flex flex-wrap items-center justify-between gap-2 pt-2 text-xs lg:text-[11px] text-muted-foreground'>
+          <div className='flex min-w-0 flex-wrap items-center gap-2.5'>
+            <ContentDate item={item} />
+            {!compact && (
+              <>
+                <Metric label='浏览' value={metrics?.views} icon={Eye} />
+                <Metric label='点赞' value={metrics?.likes} icon={Heart} />
+                <Metric
+                  label='评论'
+                  value={metrics?.comments}
+                  icon={MessageCircle}
+                />
+              </>
             )}
-            {item.junk.isJunk && (
-              <Badge
-                variant='destructive'
-                className='mt-2 max-w-full whitespace-normal text-left'
-              >
-                垃圾内容 ·{' '}
-                {item.junk.note ??
-                  item.junk.reason ??
-                  (item.junk.source === 'manual' ? '人工标记' : 'AI 判定')}
-              </Badge>
-            )}
-            {item.processStatus !== 'completed' &&
-              item.processStatus !== 'unprocessed' && (
-                <Badge variant='outline' className='mt-2'>
-                  {statusLabels[item.processStatus]}
-                </Badge>
-              )}
           </div>
-        </article>
+          <div className='flex shrink-0 items-center gap-1'>
+            {onFavorite && (
+              <Button
+                variant='ghost'
+                size='icon'
+                className='size-11 lg:size-8'
+                aria-label={
+                  item.utilizationActions.includes('favorite')
+                    ? '取消收藏'
+                    : '收藏'
+                }
+                aria-pressed={item.utilizationActions.includes('favorite')}
+                title={
+                  item.utilizationActions.includes('favorite')
+                    ? '取消收藏'
+                    : '收藏'
+                }
+                disabled={item.junk.isJunk || favoritePending}
+                onClick={(event) => {
+                  event.stopPropagation()
+                  onFavorite()
+                }}
+              >
+                <Bookmark
+                  className={
+                    item.utilizationActions.includes('favorite')
+                      ? 'fill-current'
+                      : ''
+                  }
+                />
+              </Button>
+            )}
+            {item.url && (
+              <Button
+                asChild
+                variant='ghost'
+                size='icon'
+                className='size-11 lg:size-8'
+                onClick={(event) => event.stopPropagation()}
+              >
+                <a
+                  href={item.url}
+                  target='_blank'
+                  rel='noreferrer'
+                  aria-label={isXPost(item) ? '在 X 查看原推' : '打开原文'}
+                  title={isXPost(item) ? '在 X 查看原推' : '打开原文'}
+                >
+                  <ExternalLink />
+                </a>
+              </Button>
+            )}
+          </div>
+        </div>
+        {item.processStatus === 'unprocessed' && (
+          <Badge
+            variant='outline'
+            className='mt-2 max-w-full whitespace-normal text-left'
+          >
+            未处理 · {item.unprocessedReason}
+          </Badge>
+        )}
+        {item.junk.isJunk && (
+          <Badge
+            variant='destructive'
+            className='mt-2 max-w-full whitespace-normal text-left'
+          >
+            垃圾内容 ·{' '}
+            {item.junk.note ??
+              item.junk.reason ??
+              (item.junk.source === 'manual' ? '人工标记' : 'AI 判定')}
+          </Badge>
+        )}
+        {item.processStatus !== 'completed' &&
+          item.processStatus !== 'unprocessed' && (
+            <Badge variant='outline' className='mt-2'>
+              {statusLabels[item.processStatus]}
+            </Badge>
+          )}
+      </div>
+    </article>
+  )
+  if (compact) return card
+  return (
+    <HoverCard openDelay={350} closeDelay={150}>
+      <HoverCardTrigger asChild>
+        {card}
       </HoverCardTrigger>
       <HoverCardContent
         side='right'
         align='start'
         className='max-h-[min(70vh,32rem)] overflow-y-auto'
       >
-        {item.kind !== 'short_post' && item.title && (
+        {!isXPost(item) && item.kind !== 'short_post' && item.title && (
           <h3 className='mb-2 text-sm font-semibold leading-5'>
             {listTitle(item)}
           </h3>
@@ -729,6 +805,81 @@ export function ContentCard({
   )
 }
 
+function PostMedia({ item }: { item: FeedItem }) {
+  return (
+    <>
+      {item.images && item.images.length > 0 && (
+        <div className='grid gap-2 sm:grid-cols-2'>
+          {item.images.map((image, imageIndex) => (
+            <a
+              key={`${image.url}-${imageIndex}`}
+              href={image.url}
+              target='_blank'
+              rel='noreferrer'
+              className={`overflow-hidden rounded-sm border bg-muted ${imageIndex === 0 ? 'sm:col-span-2' : ''}`}
+              title='查看原图'
+            >
+              <img
+                src={image.url}
+                alt={`内容配图 ${imageIndex + 1}`}
+                className={`w-full object-cover ${imageIndex === 0 ? 'max-h-[440px]' : 'aspect-video'}`}
+              />
+            </a>
+          ))}
+        </div>
+      )}
+      {item.quotedPost && (
+        <section
+          className='space-y-3 border-l-2 border-foreground/20 bg-foreground/[0.025] p-4'
+          aria-label='引用的帖子'
+        >
+          <div className='text-sm'>
+            <span className='font-semibold'>
+              {item.quotedPost.authorName ??
+                item.quotedPost.authorHandle ??
+                'X 用户'}
+            </span>
+            {item.quotedPost.authorHandle && (
+              <span className='ml-2 text-muted-foreground'>
+                @{item.quotedPost.authorHandle}
+              </span>
+            )}
+            <span className='ml-2 text-muted-foreground'>引用的帖子</span>
+          </div>
+          {item.quotedPost.text && (
+            <p className='whitespace-pre-wrap leading-7'>
+              {item.quotedPost.text}
+            </p>
+          )}
+          {item.quotedPost.images?.map((image, index) => (
+            <a
+              key={`${image.url}-${index}`}
+              href={image.url}
+              target='_blank'
+              rel='noreferrer'
+              className='block'
+              title='查看引用帖原图'
+            >
+              <img
+                src={image.url}
+                alt={`引用帖配图 ${index + 1}`}
+                className='max-h-[520px] w-full object-contain'
+              />
+            </a>
+          ))}
+          <a
+            href={item.quotedPost.url}
+            target='_blank'
+            rel='noreferrer'
+            className='inline-block text-sm underline underline-offset-2'
+          >
+            查看引用帖原文
+          </a>
+        </section>
+      )}
+    </>
+  )
+}
 export function Detail({
   item,
   index,
@@ -858,7 +1009,7 @@ export function Detail({
     >
       <Tabs
         key={item.id}
-        defaultValue='summary'
+        defaultValue={isXPost(item) ? 'chinese' : 'summary'}
         className='h-full min-h-0 gap-0'
       >
         <SidebarHeader className='gap-0 border-b p-0'>
@@ -997,8 +1148,8 @@ export function Detail({
                     href={item.url}
                     target='_blank'
                     rel='noreferrer'
-                    aria-label='打开原文'
-                    title='打开原文'
+                    aria-label={isXPost(item) ? '在 X 查看原推' : '打开原文'}
+                    title={isXPost(item) ? '在 X 查看原推' : '打开原文'}
                   >
                     <ExternalLink />
                   </a>
@@ -1080,7 +1231,7 @@ export function Detail({
               </span>
             </div>
             <h2 className='text-lg font-semibold leading-snug lg:line-clamp-2 lg:text-xl lg:leading-tight'>
-              {listTitle(item)}
+              {isXPost(item) ? item.source?.name : listTitle(item)}
             </h2>
             <div
               aria-label='互动与发布时间'
@@ -1124,42 +1275,62 @@ export function Detail({
             )}
           </div>
           <TabsList className='no-scrollbar h-10 w-full justify-start gap-4 overflow-x-auto px-5 md:px-6'>
-            <TabsTrigger value='summary'>AI 总结</TabsTrigger>
+            {!isXPost(item) && (
+              <TabsTrigger value='summary'>AI 总结</TabsTrigger>
+            )}
             <TabsTrigger value='chinese'>中文</TabsTrigger>
-            {englishBody && <TabsTrigger value='english'>英文</TabsTrigger>}
+            {englishBody && (
+              <TabsTrigger value='english'>
+                {isXPost(item) ? '原文' : '英文'}
+              </TabsTrigger>
+            )}
             <TabsTrigger value='properties'>属性</TabsTrigger>
             <TabsTrigger value='logs'>日志</TabsTrigger>
           </TabsList>
         </SidebarHeader>
         <SidebarContent className='px-5 py-5 md:px-6'>
           <div className='mx-auto max-w-3xl'>
+            <section aria-label='内容标签' className='mb-5 border-b pb-4'>
+              <dl className='grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-sm'>
+                <dt>内容分类</dt>
+                <dd>
+                  {contentCategories
+                    .filter((tag) => item.topics.includes(tag))
+                    .join('、') || '暂无分类'}
+                </dd>
+                <dt>主题</dt>
+                <dd>
+                  {contentThemes
+                    .filter((tag) => item.topics.includes(tag))
+                    .join('、') || '暂无主题'}
+                </dd>
+                <dt>关键词</dt>
+                <dd>{item.keywordsText || '暂无关键词'}</dd>
+              </dl>
+            </section>
             <TabsContent value='chinese' className='relative m-0 space-y-5'>
+              {isXPost(item) &&
+                item.summary &&
+                item.summary.replace(/\s+/g, ' ').trim() !== item.title &&
+                item.summary !== chineseBody &&
+                item.summary !== englishBody && (
+                  <section className='mb-4'>
+                    <h3 className='text-sm font-semibold'>AI 导读</h3>
+                    <p>{item.summary}</p>
+                  </section>
+                )}
+              {isXPost(item) && item.editorialJudgment && (
+                <section className='mb-4'>
+                  <h3 className='text-sm font-semibold'>推荐理由</h3>
+                  <p>{item.editorialJudgment}</p>
+                </section>
+              )}
               {chineseBody && (
                 <CopyButton
                   text={chineseBody}
                   label='复制中文内容'
                   className='absolute right-0 top-0 z-10 bg-background/90'
                 />
-              )}
-              {item.images && item.images.length > 0 && (
-                <div className='grid gap-2 sm:grid-cols-2'>
-                  {item.images.map((image, imageIndex) => (
-                    <a
-                      key={`${image.url}-${imageIndex}`}
-                      href={image.url}
-                      target='_blank'
-                      rel='noreferrer'
-                      className={`overflow-hidden rounded-sm border bg-muted ${imageIndex === 0 ? 'sm:col-span-2' : ''}`}
-                      title='查看原图'
-                    >
-                      <img
-                        src={image.url}
-                        alt={`内容配图 ${imageIndex + 1}`}
-                        className={`w-full object-cover ${imageIndex === 0 ? 'max-h-[440px]' : 'aspect-video'}`}
-                      />
-                    </a>
-                  ))}
-                </div>
               )}
               {item.video?.thumbnailUrl && (
                 <div className='relative overflow-hidden rounded-sm border bg-code-surface'>
@@ -1171,7 +1342,9 @@ export function Detail({
                   <PlayCircle className='absolute left-1/2 top-1/2 size-14 -translate-x-1/2 -translate-y-1/2 text-code-foreground' />
                 </div>
               )}
-              {chineseBody ? (
+              {item.postMode === 'original-link' ? (
+                item.summary && <p>{item.summary}</p>
+              ) : chineseBody ? (
                 <div className='space-y-3 whitespace-pre-wrap break-words leading-8 [&_a]:underline [&_h1]:font-semibold [&_h2]:font-semibold [&_h3]:font-semibold [&_li]:ml-5 [&_ol]:list-decimal [&_ul]:list-disc'>
                   <ReactMarkdown remarkPlugins={[remarkGfm]}>
                     {chineseBody}
@@ -1220,57 +1393,7 @@ export function Detail({
                   转发
                 </p>
               )}
-              {item.quotedPost && (
-                <section
-                  className='space-y-3 border-l-2 border-foreground/20 bg-foreground/[0.025] p-4'
-                  aria-label='引用的帖子'
-                >
-                  <div className='text-sm'>
-                    <span className='font-semibold'>
-                      {item.quotedPost.authorName ??
-                        item.quotedPost.authorHandle ??
-                        'X 用户'}
-                    </span>
-                    {item.quotedPost.authorHandle && (
-                      <span className='ml-2 text-muted-foreground'>
-                        @{item.quotedPost.authorHandle}
-                      </span>
-                    )}
-                    <span className='ml-2 text-muted-foreground'>
-                      引用的帖子
-                    </span>
-                  </div>
-                  {item.quotedPost.text && (
-                    <p className='whitespace-pre-wrap leading-7'>
-                      {item.quotedPost.text}
-                    </p>
-                  )}
-                  {item.quotedPost.images.map((image, index) => (
-                    <a
-                      key={`${image.url}-${index}`}
-                      href={image.url}
-                      target='_blank'
-                      rel='noreferrer'
-                      className='block'
-                      title='查看引用帖原图'
-                    >
-                      <img
-                        src={image.url}
-                        alt={`引用帖配图 ${index + 1}`}
-                        className='max-h-[520px] w-full object-contain'
-                      />
-                    </a>
-                  ))}
-                  <a
-                    href={item.quotedPost.url}
-                    target='_blank'
-                    rel='noreferrer'
-                    className='inline-block text-sm underline underline-offset-2'
-                  >
-                    查看引用帖原文
-                  </a>
-                </section>
-              )}
+              <PostMedia item={item} />
             </TabsContent>
             {englishBody && (
               <TabsContent value='english' className='relative m-0'>
@@ -1288,6 +1411,7 @@ export function Detail({
                     englishBody
                   )}
                 </div>
+                {isXPost(item) && <PostMedia item={item} />}
               </TabsContent>
             )}
             <TabsContent value='summary' className='relative m-0 space-y-6'>
@@ -1299,41 +1423,16 @@ export function Detail({
                 />
               )}
               <section>
-                <h3 className='mb-2 text-sm font-semibold'>看完能获得什么</h3>
-                <p className='leading-7'>
-                  {item.valueSummary || '暂无价值分析'}
-                </p>
-              </section>
-              <section aria-label='文章标签'>
-                <h3 className='mb-2 text-sm font-semibold'>文章标签</h3>
-                <div className='flex flex-wrap gap-1.5'>
-                  {item.topics.length ? (
-                    item.topics.map((topic) => (
-                      <Badge
-                        key={topic}
-                        variant='outline'
-                        className='font-normal'
-                      >
-                        {topic}
-                      </Badge>
-                    ))
-                  ) : (
-                    <span className='text-sm text-muted-foreground'>
-                      暂无标签
-                    </span>
-                  )}
-                </div>
-              </section>
-              <section>
                 <h3 className='mb-2 text-sm font-semibold'>
-                  {item.kind === 'short_post'
-                    ? '帖子内容（未额外总结）'
+                  {(item.kind === 'short_post' || item.kind === 'image_post') &&
+                  !['understand', 'long'].includes(item.postMode ?? '')
+                    ? '帖子内容'
                     : 'AI 总结'}
                 </h3>
-                {item.summary ? (
+                {item.kind === 'short_post' || item.summary ? (
                   <div className='space-y-3 break-words leading-7 [&_a]:underline [&_h1]:font-semibold [&_h2]:font-semibold [&_h3]:font-semibold [&_li]:ml-5 [&_ol]:list-decimal [&_ul]:list-disc'>
                     {item.kind === 'short_post' ? (
-                      <p className='whitespace-pre-wrap'>{item.summary}</p>
+                      <p className='whitespace-pre-wrap'>{cardContent(item)}</p>
                     ) : (
                       <ReactMarkdown remarkPlugins={[remarkGfm]}>
                         {item.summary}
@@ -1344,6 +1443,12 @@ export function Detail({
                   <p className='text-sm text-muted-foreground'>暂无 AI 总结</p>
                 )}
               </section>
+              {item.editorialJudgment && (
+                <section>
+                  <h3 className='mb-2 text-sm font-semibold'>推荐理由</h3>
+                  <p>{item.editorialJudgment}</p>
+                </section>
+              )}
               <section>
                 <h3 className='mb-2 text-sm font-semibold'>评分</h3>
                 <p className='mb-3 text-lg font-semibold'>{scoreLabel(item)}</p>
@@ -1460,11 +1565,13 @@ export function Detail({
                 <div>
                   <dt>推荐状态</dt>
                   <dd>
-                    {item.recommendation === 'core'
-                      ? '核心'
-                      : item.recommendation === 'explore'
-                        ? '探索'
-                        : '不推荐'}
+                    {item.analysis?.ruleVersion === 'aihot-41cee09'
+                      ? '按关注度排序'
+                      : item.recommendation === 'core'
+                        ? '核心'
+                        : item.recommendation === 'explore'
+                          ? '探索'
+                          : '不推荐'}
                   </dd>
                 </div>
                 <div>
@@ -1634,6 +1741,15 @@ export function ContentWorkspace({ scope }: { scope: ContentScope }) {
   }
   const [items, setItems] = useState<FeedItem[]>()
   const [error, setError] = useState('')
+  const [scoreRanges, setScoreRanges] = useState<ScoreRange[]>([])
+  const [scoreRangesError, setScoreRangesError] = useState('')
+  useEffect(() => {
+    let active = true
+    void api<{ ranges: ScoreRange[] }>('/api/config/score-ranges')
+      .then(({ ranges }) => { if (active) setScoreRanges(ranges) })
+      .catch((reason) => { if (active) setScoreRangesError(`分数区间读取失败：${String(reason)}`) })
+    return () => { active = false }
+  }, [])
   const url = useBrowserUrl()
   const selected = readRoute(url).contentId
   const [detail, setDetail] = useState<{
@@ -1664,8 +1780,10 @@ export function ContentWorkspace({ scope }: { scope: ContentScope }) {
       dateTo: saved?.dateTo ?? '',
       datePreset: saved?.datePreset ?? 'all',
       kind: 'all',
+      tag: 'all',
       sourceType: 'all',
       sort: scope === 'daily' ? 'score-desc' : 'newest',
+      scoreRange: 'all',
       ...(saved ?? {}),
     }
   })
@@ -1707,7 +1825,7 @@ export function ContentWorkspace({ scope }: { scope: ContentScope }) {
   const load = useCallback(
     (active: () => boolean) =>
       api<{ items: FeedItem[] }>(
-        `/api/contents?scope=${scope}${filters.query.trim() ? `&keyword=${encodeURIComponent(filters.query.trim())}` : ''}`
+        `/api/contents?scope=${scope}`
       )
         .then((data) => {
           if (!active()) return
@@ -1717,23 +1835,30 @@ export function ContentWorkspace({ scope }: { scope: ContentScope }) {
         .catch((reason) => {
           if (active()) setError(String(reason))
         }),
-    [filters.query, scope]
+    [scope]
   )
   const visible = useMemo(() => {
     const scoped = filterContentScope(items ?? [], scope)
-    const filtered = filterContentItems(scoped, { ...filters, junk: 'all' })
+    const filtered = filterContentItems(scoped, { ...filters, junk: 'all' }, scoreRanges)
     return [...filtered].sort((left, right) => {
       if (filters.sort === 'score-desc')
-        return (right.totalScore ?? -1) - (left.totalScore ?? -1)
+        return (
+          Number(right.analysis?.ruleVersion === 'aihot-41cee09') -
+            Number(left.analysis?.ruleVersion === 'aihot-41cee09') ||
+          (right.totalScore ?? -1) - (left.totalScore ?? -1)
+        )
       const leftTime =
-        Date.parse(left.publishedAt ?? left.discoveredAt ?? '') || 0
+        Date.parse(contentDate(left)?.value ?? '') || 0
       const rightTime =
-        Date.parse(right.publishedAt ?? right.discoveredAt ?? '') || 0
+        Date.parse(contentDate(right)?.value ?? '') || 0
       return filters.sort === 'oldest'
         ? leftTime - rightTime
         : rightTime - leftTime
     })
-  }, [items, filters, scope])
+  }, [items, filters, scope, scoreRanges])
+  const paginationKey = JSON.stringify([filters, scope])
+  const [pagination, setPagination] = useState({ key: paginationKey, limit: 100 })
+  const renderLimit = pagination.key === paginationKey ? pagination.limit : 100
   const index = visible.findIndex((item) => item.id === selected)
   const selectedItem = selected
     ? ((detail?.id === selected ? detail.item : undefined) ??
@@ -2024,20 +2149,17 @@ export function ContentWorkspace({ scope }: { scope: ContentScope }) {
                     item.recommendation === 'core' ? 'default' : 'secondary'
                   }
                 >
-                  {item.recommendation === 'core'
-                    ? '核心'
-                    : item.recommendation === 'explore'
-                      ? '探索'
-                      : '普通'}
+                  {item.analysis?.ruleVersion === 'aihot-41cee09'
+                    ? '按关注度排序'
+                    : item.recommendation === 'core'
+                      ? '核心'
+                      : item.recommendation === 'explore'
+                        ? '探索'
+                        : '普通'}
                 </Badge>
               </TableCell>
               <TableCell>
-                {item.publishedAt
-                  ? new Date(item.publishedAt).toLocaleDateString('zh-CN', {
-                      month: '2-digit',
-                      day: '2-digit',
-                    })
-                  : '未知'}
+                <ContentDate item={item} />
               </TableCell>
               <TableCell>
                 <div className='flex justify-end gap-1'>
@@ -2076,7 +2198,9 @@ export function ContentWorkspace({ scope }: { scope: ContentScope }) {
                         href={item.url}
                         target='_blank'
                         rel='noreferrer'
-                        aria-label='打开原文'
+                        aria-label={
+                          isXPost(item) ? '在 X 查看原推' : '打开原文'
+                        }
                       >
                         <ExternalLink />
                       </a>
@@ -2098,12 +2222,6 @@ export function ContentWorkspace({ scope }: { scope: ContentScope }) {
     { value: 'article', label: '文章' },
     { value: 'short_post', label: '短帖' },
   ]
-  const recommendationFilters: Array<{ value: string; label: string }> = [
-    { value: 'all', label: '全部推荐' },
-    { value: 'core', label: '核心' },
-    { value: 'explore', label: '探索' },
-    { value: 'none', label: '普通' },
-  ]
   const sourceOptions = [
     { value: 'all', label: '全部平台' },
     { value: 'x', label: 'X' },
@@ -2121,6 +2239,8 @@ export function ContentWorkspace({ scope }: { scope: ContentScope }) {
   const advancedFilterActive =
     filters.processStatus !== 'all' || filters.read !== 'all'
   const datePresets = [
+    { value: 'day', label: '最近一天', days: 1 },
+    { value: 'three-days', label: '最近三天', days: 3 },
     { value: 'week', label: '近一周', days: 7 },
     { value: 'month', label: '近一个月', days: 30 },
     { value: 'quarter', label: '近三个月', days: 90 },
@@ -2149,14 +2269,15 @@ export function ContentWorkspace({ scope }: { scope: ContentScope }) {
       numberOfMonths={mobile ? 1 : 2}
     />
   )
-  const FilterGroup = mobile ? 'div' : ButtonGroup
+  const FilterGroup = mobile || showingDetail ? 'div' : ButtonGroup
   const activeFilterCount = [
+    Boolean(filters.tag && filters.tag !== 'all'),
     filters.kind !== 'all',
-    filters.recommendation !== 'all',
     filters.sourceType !== 'all',
     filters.datePreset !== 'all',
     filters.processStatus !== 'all',
     filters.read !== 'all',
+    Boolean(filters.scoreRange && filters.scoreRange !== 'all'),
   ].filter(Boolean).length
   const list = (
     <div className='flex h-full w-full min-w-0 max-w-[100vw] flex-col overflow-hidden bg-background'>
@@ -2165,7 +2286,7 @@ export function ContentWorkspace({ scope }: { scope: ContentScope }) {
           <DialogHeader>
             <DialogTitle>选择日期范围</DialogTitle>
             <DialogDescription>
-              选择开始和结束日期，筛选列表中的内容。
+              按发布日期筛选，没有发布日期时按首次采集日期；包含开始和结束当天。
             </DialogDescription>
           </DialogHeader>
           <div className='flex justify-center'>{dateRangePicker}</div>
@@ -2203,13 +2324,24 @@ export function ContentWorkspace({ scope }: { scope: ContentScope }) {
         </Button>
         <div
           id='content-filters'
-          className={`${mobile && !filtersOpen ? 'hidden' : 'flex'} min-w-0 max-lg:w-full max-lg:max-h-[45svh] max-lg:overflow-y-auto`}
+          className={`${mobile && !filtersOpen ? 'hidden' : 'flex'} min-w-0 max-w-full max-lg:w-full max-lg:max-h-[45svh] max-lg:overflow-y-auto`}
         >
           <FilterGroup
             role='group'
             aria-label='内容搜索与筛选'
-            className='shrink-0 max-lg:grid max-lg:grid-cols-2 max-lg:w-full max-lg:gap-2 max-lg:[&>button]:h-11 max-lg:[&>button]:max-w-none max-lg:[&>button]:justify-start max-lg:[&>button]:text-sm'
+            className={cn('shrink-0 max-lg:grid max-lg:grid-cols-2 max-lg:w-full max-lg:gap-2 max-lg:[&>button]:h-11 max-lg:[&>button]:max-w-none max-lg:[&>button]:justify-start max-lg:[&>button]:text-sm', showingDetail && 'flex w-full flex-wrap gap-1')}
           >
+            <FilterDropdown
+              label='分数区间'
+              value={scoreRanges.some((range) => range.id === filters.scoreRange) || filters.scoreRange === 'unscored' ? filters.scoreRange! : 'all'}
+              onChange={(value) => setFilter('scoreRange', value)}
+              options={[
+                { value: 'all', label: '全部分数' },
+                ...scoreRanges.map((range) => ({ value: range.id, label: `${range.min}–${range.max} 分` })),
+                { value: 'unscored', label: '未评分' },
+              ]}
+            />
+
             <FilterDropdown
               label='内容类型'
               value={filters.kind ?? 'all'}
@@ -2221,21 +2353,26 @@ export function ContentWorkspace({ scope }: { scope: ContentScope }) {
             />
 
             <FilterDropdown
-              label='推荐等级'
-              value={filters.recommendation}
-              onChange={(value) => setFilter('recommendation', value)}
-              options={recommendationFilters}
+              label='内容标签'
+              value={filters.tag || 'all'}
+              onChange={(value) => setFilter('tag', value)}
+              options={[
+                { value: 'all', label: '全部标签' },
+                ...[...contentCategories, ...contentThemes].map((value) => ({
+                  value,
+                  label: value,
+                })),
+              ]}
             />
-
             <FilterDropdown
-              label='评分'
+              label='排序'
               value={filters.sort ?? 'newest'}
               onChange={(value) => setFilter('sort', value)}
               icon={ArrowDownWideNarrow}
               options={[
-                { value: 'score-desc', label: '评分最高' },
-                { value: 'newest', label: '最新发布' },
-                { value: 'oldest', label: '最早发布' },
+                { value: 'score-desc', label: '关注度最高' },
+                { value: 'newest', label: '最新日期' },
+                { value: 'oldest', label: '最早日期' },
               ]}
             />
 
@@ -2260,7 +2397,7 @@ export function ContentWorkspace({ scope }: { scope: ContentScope }) {
               </DropdownMenuTrigger>
               <DropdownMenuContent align='end' className='w-40'>
                 <DropdownMenuLabel className='text-xs max-lg:min-h-11 max-lg:text-sm'>
-                  日期范围
+                  发布日期优先，无则按采集日期
                 </DropdownMenuLabel>
                 <DropdownMenuSeparator />
                 <DropdownMenuItem
@@ -2467,6 +2604,7 @@ export function ContentWorkspace({ scope }: { scope: ContentScope }) {
         </ButtonGroup>
       </PageHeader>
 
+      {scoreRangesError && <p role='alert' className='px-4 pb-2 text-sm text-destructive'>{scoreRangesError}</p>}
       {favoriteError && (
         <p role='alert' className='px-4 pb-2 text-sm text-destructive'>
           {favoriteError}
@@ -2489,8 +2627,9 @@ export function ContentWorkspace({ scope }: { scope: ContentScope }) {
         ) : (
           <div className='space-y-5'>
             {!mobile && viewMode === 'table'
-              ? renderTable(visible)
-              : renderMasonry(visible)}
+              ? renderTable(visible.slice(0, renderLimit))
+              : renderMasonry(visible.slice(0, renderLimit))}
+            {visible.length > renderLimit && <Button variant='outline' onClick={() => setPagination({ key: paginationKey, limit: renderLimit + 100 })}>加载更多（已显示 {renderLimit} / {visible.length} 条）</Button>}
           </div>
         )}
       </div>

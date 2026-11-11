@@ -1,5 +1,5 @@
 :root {
-  --tint: 106;
+  --tint: 255;
   --radius-page: 0;
   --radius-document: 0.375rem;
   --radius-control: 0.5rem;
@@ -8,14 +8,14 @@
   --radius-thread: 1rem;
   --radius-capsule: 9999px;
 
-  --background: oklch(0.982 0.009 var(--tint));
+  --background: white;
   --foreground: oklch(0.205 0.02 var(--tint));
-  --card: oklch(0.992 0.006 var(--tint));
+  --card: white;
   --card-foreground: var(--foreground);
-  --popover: oklch(0.992 0.006 var(--tint));
+  --popover: white;
   --popover-foreground: var(--foreground);
-  --primary: var(--foreground);
-  --primary-foreground: var(--background);
+  --primary: #2563eb;
+  --primary-foreground: white;
   --secondary: oklch(0.948 0.014 var(--tint));
   --secondary-foreground: var(--foreground);
   --muted: oklch(0.948 0.014 var(--tint));
@@ -52,6 +52,8 @@
 }
 
 .dark {
+  --primary: #93c5fd;
+  --primary-foreground: #101828;
   --background: oklch(0.19 0.016 var(--tint));
   --foreground: oklch(0.93 0.012 var(--tint));
   --card: oklch(0.215 0.016 var(--tint));

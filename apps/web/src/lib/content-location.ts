@@ -9,10 +9,36 @@ const filterKeys = [
   'dateFrom',
   'dateTo',
   'datePreset',
+  'tag',
   'kind',
   'sourceType',
   'sort',
+  'scoreRange',
 ] as const
+
+export function resolveDatePreset(
+  filters: ContentFilters,
+  now = new Date()
+): ContentFilters {
+  const days = (
+    {
+      day: 1,
+      'three-days': 3,
+      week: 7,
+      month: 30,
+      quarter: 90,
+      'half-year': 180,
+    } as Record<string, number>
+  )[filters.datePreset ?? '']
+  if (!days) return filters
+  const from = new Date(now)
+  from.setDate(from.getDate() - days + 1)
+  return {
+    ...filters,
+    dateFrom: from.toLocaleDateString('en-CA'),
+    dateTo: now.toLocaleDateString('en-CA'),
+  }
+}
 
 // A complete snapshot avoids depending on another browser's saved filters.
 export function readContentFilters(
@@ -20,10 +46,11 @@ export function readContentFilters(
   defaults: ContentFilters
 ): ContentFilters {
   const params = new URLSearchParams(search)
-  if (params.get('filters') !== '1') return defaults
+  if (params.get('filters') !== '1')
+    return resolveDatePreset({ ...defaults, recommendation: 'all' })
   const filters = { ...defaults }
   for (const key of filterKeys) filters[key] = params.get(key) ?? ''
-  return filters
+  return resolveDatePreset({ ...filters, recommendation: 'all' })
 }
 export function writeContentFilters(url: URL, filters: ContentFilters): URL {
   const target = new URL(url)

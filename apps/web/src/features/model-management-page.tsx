@@ -34,6 +34,7 @@ interface ModelProviderItem {
   name: string
   authMethods: Array<'api_key' | 'oauth'>
   apiKeyLabel?: string
+  apiKeyConfigurable: boolean
   oauthLabel?: string
   subscription: boolean
   modelCount: number
@@ -44,6 +45,9 @@ interface ModelProviderItem {
   credentialType?: 'api_key' | 'oauth'
   authPath?: string
   usesDefaultPath?: boolean
+  baseUrl?: string
+  modelId?: string
+  modelName?: string
 }
 
 const modelStages: Array<{
@@ -65,7 +69,7 @@ const modelStages: Array<{
 ]
 
 function authDescription(provider: ModelProviderItem) {
-  return [
+  const methods = [
     provider.authMethods.includes('api_key')
       ? (provider.apiKeyLabel ?? 'API Key')
       : '',
@@ -75,6 +79,7 @@ function authDescription(provider: ModelProviderItem) {
   ]
     .filter(Boolean)
     .join(' / ')
+  return methods || '无需密钥（通过 Pi 直连）'
 }
 
 function modelChoice(providerId: string, modelId: string) {
@@ -93,6 +98,9 @@ export function ModelManagementPage() {
   const [search, setSearch] = useState('')
   const [apiKey, setApiKey] = useState('')
   const [environment, setEnvironment] = useState('')
+  const [ollamaBaseUrl, setOllamaBaseUrl] = useState('')
+  const [ollamaModelId, setOllamaModelId] = useState('')
+  const [ollamaModelName, setOllamaModelName] = useState('')
   const [modelData, setModelData] = useState<ModelConfigData>()
   const [modelProvider, setModelProvider] = useState('openai-codex')
   const [defaultModel, setDefaultModel] = useState('')
@@ -303,6 +311,9 @@ export function ModelManagementPage() {
                           setSelectedProviderId(provider.id)
                           setApiKey('')
                           setEnvironment('')
+                          setOllamaBaseUrl(provider.baseUrl ?? '')
+                          setOllamaModelId(provider.modelId ?? '')
+                          setOllamaModelName(provider.modelName ?? '')
                         }}
                         className={`flex w-full items-start justify-between gap-3 rounded-md px-3 py-2.5 text-left hover:bg-foreground/[0.025] ${selectedProviderId === provider.id ? 'bg-foreground/[0.05]' : ''}`}
                       >
@@ -350,7 +361,9 @@ export function ModelManagementPage() {
                           : selectedProvider.verified
                             ? '已通过连接测试'
                             : selectedProvider.configured
-                              ? '凭据已保存，待测试'
+                              ? selectedProvider.id === 'ollama'
+                                ? '配置已保存，待测试'
+                                : '凭据已保存，待测试'
                               : '未配置'}
                       </div>
                     </div>
@@ -362,6 +375,85 @@ export function ModelManagementPage() {
                         {authDescription(selectedProvider)}
                       </p>
                     </div>
+                    {selectedProvider.id === 'ollama' && (
+                      <div className='mt-6 grid gap-4'>
+                        <div>
+                          <h3 className='font-display text-lg font-semibold'>
+                            配置 Ollama
+                          </h3>
+                          <p className='mt-1 text-sm text-muted-foreground'>
+                            地址和模型由此处配置，保存后仍通过 Pi
+                            统一调用；可直接粘贴 /api/chat 地址。
+                          </p>
+                        </div>
+                        <label className='grid gap-1.5 text-sm'>
+                          <span className='font-medium'>Ollama 服务地址</span>
+                          <Input
+                            value={ollamaBaseUrl}
+                            onChange={(event) =>
+                              setOllamaBaseUrl(event.target.value)
+                            }
+                            placeholder='http://192.168.3.103:11434'
+                          />
+                        </label>
+                        <label className='grid gap-1.5 text-sm'>
+                          <span className='font-medium'>模型 ID</span>
+                          <Input
+                            value={ollamaModelId}
+                            onChange={(event) =>
+                              setOllamaModelId(event.target.value)
+                            }
+                            placeholder='gemma4:12b-mlx'
+                          />
+                        </label>
+                        <label className='grid gap-1.5 text-sm'>
+                          <span className='font-medium'>模型名称</span>
+                          <Input
+                            value={ollamaModelName}
+                            onChange={(event) =>
+                              setOllamaModelName(event.target.value)
+                            }
+                            placeholder='Gemma 4 12B MLX'
+                          />
+                        </label>
+                        <Button
+                          className='w-fit'
+                          size='sm'
+                          disabled={
+                            !ollamaBaseUrl.trim() ||
+                            !ollamaModelId.trim() ||
+                            !ollamaModelName.trim()
+                          }
+                          onClick={() =>
+                            void (async () => {
+                              try {
+                                await put('/api/model-providers/ollama', {
+                                  baseUrl: ollamaBaseUrl,
+                                  modelId: ollamaModelId,
+                                  modelName: ollamaModelName,
+                                })
+                                setMessage(
+                                  'Ollama 配置已保存。请点击“测试连通性”。'
+                                )
+                                await Promise.all([
+                                  loadProviders(),
+                                  loadModels(),
+                                ])
+                              } catch (error) {
+                                setMessage(
+                                  error instanceof Error
+                                    ? error.message
+                                    : String(error)
+                                )
+                              }
+                            })()
+                          }
+                        >
+                          <Save />
+                          保存配置
+                        </Button>
+                      </div>
+                    )}
                     {selectedProvider.authMethods.includes('oauth') && (
                       <ProviderLogin
                         key={selectedProvider.id}
@@ -373,7 +465,7 @@ export function ModelManagementPage() {
                         }}
                       />
                     )}
-                    {selectedProvider.authMethods.includes('api_key') && (
+                    {selectedProvider.apiKeyConfigurable && (
                       <div className='mt-6 grid gap-4'>
                         <div>
                           <h3 className='font-display text-lg font-semibold'>
@@ -440,13 +532,20 @@ export function ModelManagementPage() {
                               ? '正在测试…'
                               : '测试连通性'}
                           </Button>
-                          <Button
-                            variant='ghost'
-                            size='sm'
-                            onClick={() => void clearProvider(selectedProvider)}
-                          >
-                            移除凭据
-                          </Button>
+                          {(selectedProvider.authMethods.length > 0 ||
+                            selectedProvider.id === 'ollama') && (
+                            <Button
+                              variant='ghost'
+                              size='sm'
+                              onClick={() =>
+                                void clearProvider(selectedProvider)
+                              }
+                            >
+                              {selectedProvider.id === 'ollama'
+                                ? '清除配置'
+                                : '移除凭据'}
+                            </Button>
+                          )}
                         </>
                       )}
                     </div>

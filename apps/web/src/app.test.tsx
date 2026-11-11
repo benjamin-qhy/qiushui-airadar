@@ -150,7 +150,7 @@ describe('complete web shell', () => {
     }
   })
 
-  it('shows the Chinese paraphrase without translation status for English X posts', () => {
+  it('shows the saved Chinese translation of an English short post', () => {
     const html = renderToStaticMarkup(
       <ContentCard
         item={{
@@ -173,7 +173,7 @@ describe('complete web shell', () => {
     expect(html).not.toContain('We shipped a new feature</h2>')
   })
 
-  it('shows the full X post without duplicating its generated title or list tags', () => {
+  it('shows the full X post with its content tags and without duplicating its generated title', () => {
     const body = '第一段完整帖子。\n\n第二段也要在卡片内可读。'
     const html = renderToStaticMarkup(
       <ContentCard
@@ -184,6 +184,7 @@ describe('complete web shell', () => {
           title: body.slice(0, 10),
           body,
           summary: '这不是卡片要展示的原帖正文',
+          topics: ['产品更新'],
         }}
       />
     )
@@ -191,7 +192,7 @@ describe('complete web shell', () => {
     expect(html).not.toContain('这不是卡片要展示的原帖正文')
     expect(html).not.toContain('<h2')
     expect(html).not.toContain('核心</span>')
-    expect(html).not.toContain('>AI</span>')
+    expect(html).toContain('>产品更新</span>')
     expect(html).not.toContain('max-h-[360px]')
     expect(html).not.toContain('overflow-auto')
   })
@@ -262,15 +263,42 @@ describe('complete web shell', () => {
       expect(html).toContain(tab)
     }
     expect(html).toContain('aria-label="复制 AI 总结"')
-    expect(html.indexOf('看完能获得什么</h3>')).toBeLessThan(
-      html.indexOf('文章标签</h3>')
-    )
-    expect(html.indexOf('文章标签</h3>')).toBeLessThan(
+    expect(html).not.toContain('看完能获得什么')
+    expect(html.indexOf('内容标签</h3>')).toBeLessThan(
       html.indexOf('AI 总结</h3>')
     )
     for (const action of ['做卡片', '做视频', '写文章', '建项目']) {
       expect(html).not.toContain(action)
     }
+  })
+
+  it('shows a textless X post through its photo in both card and detail', () => {
+    const photo: FeedItem = {
+      ...item,
+      source: { id: 'x-test', name: '原帖作者', type: 'x' },
+      postMode: 'original-link',
+      body: '',
+      summary: '',
+      images: [{ url: 'https://pbs.twimg.com/media/test.jpg', order: 0 }],
+      title: '仅供索引的标题',
+    }
+    const card = renderToStaticMarkup(<ContentCard item={photo} />)
+    const detail = renderToStaticMarkup(
+      <Detail
+        item={photo}
+        index={0}
+        count={1}
+        onClose={() => {}}
+        onMove={() => {}}
+        onChanged={() => {}}
+      />
+    )
+    for (const html of [card, detail]) {
+      expect(html).toContain('<img')
+      expect(html).toContain(photo.images![0]!.url)
+      expect(html).not.toContain('暂无正文')
+    }
+    expect(detail).not.toContain('仅供索引的标题</h2>')
   })
 
   it('omits the English tab when no English document exists', () => {
@@ -339,8 +367,9 @@ describe('complete web shell', () => {
           },
           {
             ...item,
-            id: 'x:outside-range',
-            firstInflowAt: '2026-09-07T01:00:00.000Z',
+            id: 'x:collected-in-range',
+            publishedAt: undefined,
+            firstInflowAt: '2026-09-14T01:00:00.000Z',
           },
         ],
         {

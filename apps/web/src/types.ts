@@ -33,6 +33,8 @@ export interface FeedItem {
   hasEnglishBody?: boolean
   summary: string
   keywordsText?: string
+  postMode?: string
+  editorialJudgment?: string
   valueSummary?: string
   originalLanguage?: 'zh' | 'en' | 'unknown'
   chineseTranslation?: string
@@ -99,6 +101,12 @@ export interface FeedItem {
     profileVersionId: string
     ruleVersion: string
   }
+}
+
+export interface ScoreRange {
+  id: string
+  min: number
+  max: number
 }
 
 export interface SourceItem {

@@ -1,6 +1,6 @@
 ---
 name: assistant-ui-design
-description: "Draw, review, or extend an assistant-ui surface: the documentation site, a marketing or product page, a component in the shipped kit, or a chat UI built on the primitives. Covers the print register, the sand palette, type roles, the line budget, motion, and the closed token and component API."
+description: "Draw, review, or extend an assistant-ui surface: the documentation site, a marketing or product page, a component in the shipped kit, or a chat UI built on the primitives. Covers the print register, the white and blue palette, type roles, the line budget, motion, and the closed token and component API."
 ---
 
 # Design surfaces like assistant-ui
@@ -58,17 +58,8 @@ The numeric aliases (`--radius-lg`, `--radius-2xl`, `--radius-3xl`) exist for Ta
 
 ## Register: color
 
-**One knob.** `--tint: 106` puts every neutral on one low-chroma oklch hue. This is sand, not gallery grayscale. To move the mood of the whole site, turn `--tint`. Never introduce a neutral outside that family, and never write `#fff`, `bg-white`, `text-black`, or a raw `gray-*` / `zinc-*` class.
+Airadar uses a clean white background with cool gray text, borders, and secondary surfaces. Blue highlights primary actions, selected items, and live activity. Use semantic theme colors so dark mode stays legible. Charts may use their own data colors.
 
-**Chrome is ink; product data may be colored.** This is the one distinction that keeps both halves of the site lawful:
-
-- Chrome (navigation, page structure, sections, captions, labels, states, cards) is monochrome. Emphasis comes from weight, size, and the fill percentage of the foreground, not from hue.
-- Product and data content keeps its own palette, because the palette *is* the content: a chart, a heat map, a trace waterfall, a syntax theme, a brand mark being quoted. Do not re-ink a product's data visualization to match the chrome, and do not re-palette one that has already been ratified.
-
-**One accent at a time, and the accent is blue.**
-
-- `blue-500` means live: streaming, running, connected, or currently selected. If nothing on the page is live, the page has no blue.
-- One live accent per page. Two blues competing means one of them is decoration.
 - The gold glint (`oklch(0.82 0.14 82)`) is specular light catching the printed mark. It is not a second accent and never carries meaning.
 - Destructive red is a state, not an accent.
 

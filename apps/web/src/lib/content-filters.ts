@@ -1,4 +1,15 @@
-import type { FeedItem } from '@/types'
+import type { FeedItem, ScoreRange } from '@/types'
+
+// Keep display, calendar filtering and chronological sorting on the same date.
+export function contentDate(
+  item: FeedItem
+): { value: string; label: '发布' | '采集' } | undefined {
+  if (item.publishedAt && Number.isFinite(Date.parse(item.publishedAt)))
+    return { value: item.publishedAt, label: '发布' }
+  if (item.firstInflowAt && Number.isFinite(Date.parse(item.firstInflowAt)))
+    return { value: item.firstInflowAt, label: '采集' }
+  return undefined
+}
 
 function localDateKey(value: string | undefined): string | undefined {
   if (!value) return undefined
@@ -17,9 +28,11 @@ export interface ContentFilters {
   dateFrom: string
   dateTo: string
   datePreset?: string
+  tag?: string
   kind?: string
   sourceType?: string
   sort?: string
+  scoreRange?: string
 }
 
 export type ContentScope =
@@ -31,7 +44,12 @@ export function isExceptionalContent(item: FeedItem): boolean {
     !item.junk.isJunk &&
     (item.processStatus !== 'completed' ||
       item.totalScore === null ||
-      (item.originalLanguage === 'en' && !item.translatedToChinese))
+      (item.originalLanguage === 'en' &&
+        !item.translatedToChinese &&
+        !(
+          item.analysis?.ruleVersion === 'aihot-41cee09' &&
+          item.translationStatus === 'skipped'
+        )))
   )
 }
 
@@ -50,21 +68,33 @@ export function filterContentScope(
     if (scope === 'all') return true
     return (
       item.processStatus === 'completed' &&
-      (item.recommendation === 'core' || item.recommendation === 'explore')
+      (item.analysis?.ruleVersion === 'aihot-41cee09' ||
+        item.recommendation === 'core' ||
+        item.recommendation === 'explore')
     )
   })
 }
 
 export function filterContentItems(
   items: FeedItem[],
-  filters: ContentFilters
+  filters: ContentFilters,
+  scoreRanges: ScoreRange[] = []
 ): FeedItem[] {
   const query = filters.query.trim().toLowerCase()
+  const scoreRange = scoreRanges.find(
+    (range) => range.id === filters.scoreRange
+  )
   return items.filter((item) => {
-    const inflowDate = localDateKey(item.firstInflowAt)
+    const displayDate = localDateKey(contentDate(item)?.value)
     return (
+      (filters.scoreRange === 'unscored'
+        ? item.totalScore === null
+        : !scoreRange ||
+          (item.totalScore !== null &&
+            item.totalScore >= scoreRange.min &&
+            item.totalScore <= scoreRange.max)) &&
       (!query ||
-        `${item.title} ${item.chineseTitle ?? ''} ${item.summary} ${item.keywordsText ?? ''} ${item.valueSummary ?? ''} ${item.unprocessedReason ?? ''} ${item.source?.name ?? ''}`
+        `${item.title} ${item.chineseTitle ?? ''} ${item.summary} ${item.keywordsText ?? ''} ${item.unprocessedReason ?? ''} ${item.source?.name ?? ''}`
           .toLowerCase()
           .includes(query)) &&
       (filters.processStatus === 'all' ||
@@ -77,14 +107,17 @@ export function filterContentItems(
       (filters.read === 'all' || item.read === (filters.read === 'read')) &&
       (filters.junk === 'all' ||
         item.junk.isJunk === (filters.junk === 'junk')) &&
+      (!filters.tag ||
+        filters.tag === 'all' ||
+        item.topics.includes(filters.tag)) &&
       (!filters.kind || filters.kind === 'all' || item.kind === filters.kind) &&
       (!filters.sourceType ||
         filters.sourceType === 'all' ||
         item.source?.type === filters.sourceType) &&
       ((!filters.dateFrom && !filters.dateTo) ||
-        (Boolean(inflowDate) &&
-          (!filters.dateFrom || inflowDate! >= filters.dateFrom) &&
-          (!filters.dateTo || inflowDate! <= filters.dateTo)))
+        (Boolean(displayDate) &&
+          (!filters.dateFrom || displayDate! >= filters.dateFrom) &&
+          (!filters.dateTo || displayDate! <= filters.dateTo)))
     )
   })
 }

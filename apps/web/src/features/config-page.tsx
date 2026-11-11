@@ -18,6 +18,7 @@ import { Textarea } from '@/components/ui/textarea'
 import { api, post, put } from '@/lib/api'
 import { useUrlChoice } from '@/lib/use-url-choice'
 import type { SourceItem } from '@/types'
+import { ScoreRangeSettings } from '@/features/score-range-settings'
 
 const configTabs = ['parameters', 'versions', 'rules'] as const
 
@@ -131,6 +132,7 @@ export function ConfigPage() {
         />
         <div className='min-h-0 flex-1 overflow-y-auto overscroll-contain p-4 pb-24 md:p-6 lg:pb-6'>
           <div className='mx-auto max-w-4xl space-y-6'>
+            <ScoreRangeSettings onSaved={() => void load()} />
             <section className='border-t pt-4'>
               <div className='flex items-center justify-between gap-4'>
                 <div>
@@ -237,6 +239,7 @@ export function ConfigPage() {
               <TabsTrigger value='rules'>固定规则</TabsTrigger>
             </TabsList>
             <TabsContent value='parameters' className='mt-4'>
+              <div className='mb-6'><ScoreRangeSettings /></div>
               <Card>
                 <CardHeader>
                   <div className='flex flex-wrap items-center justify-between gap-3'>
